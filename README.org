@@ -1,0 +1,40 @@
+#+TITLE: El Prisma
+
+Same content, different spectrum.
+
+* What
+
+El Prisma converts buffer content between formats, creating mirror buffers for editing in your preferred format. It supports lossless round-trip conversion - content survives the full cycle (e.g. Markdown -> Org -> Markdown) with untouched regions remaining byte-identical.
+
+Supported conversion pairs:
+- Markdown (GFM) <-> Org
+- JSON <-> EDN
+
+* Why
+
+Pandoc's format conversion is lossy and opinionated. Tree-sitter grammars vary in quality. El Prisma takes a different approach: it uses a positioned intermediary AST to track exactly what changed during editing, then surgically patches only the modified regions back into the source format. Untouched content is never re-rendered.
+
+The core guarantee: your edits in the mirror buffer will never be lost. If a back-conversion would lose data, you'll know before committing.
+
+* How
+
+In any supported buffer, invoke =el-prisma-convert= to open a mirror buffer in the target format. Edit freely. When done, =el-prisma-commit= converts your changes back to the source format, or =el-prisma-cancel= discards the mirror.
+
+Format-specific constructs that have no equivalent in the target format pass through as literal text. An Org =SCHEDULED:= line in a Markdown-originated buffer simply appears as text - and converts back to the exact same text on commit.
+
+** Usage
+
+#+begin_src emacs-lisp
+;; Convert current Markdown buffer to Org for editing
+M-x el-prisma-convert
+
+;; After editing, commit changes back
+M-x el-prisma-commit
+
+;; Or discard
+M-x el-prisma-cancel
+#+end_src
+
+* License
+
+GPL-3.0-or-later
