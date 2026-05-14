@@ -55,6 +55,24 @@
       (kill-buffer buf)))
   (setq el-prisma-e2e--buffers nil))
 
+;;;; Diff helper - simulates diff-buffer-with-file
+
+(defun el-prisma-e2e--diff-lines (original-text result-text)
+  "Compare ORIGINAL-TEXT to RESULT-TEXT line by line.
+Returns list of (LINE-NUM ORIGINAL CHANGED) for differing lines."
+  (let ((orig-lines (split-string original-text "\n"))
+        (result-lines (split-string result-text "\n"))
+        (diffs nil))
+    (cl-loop for i from 1
+             for ol in orig-lines
+             for rl in result-lines
+             unless (string= ol rl)
+             do (push (list i ol rl) diffs))
+    (when (/= (length orig-lines) (length result-lines))
+      (push (list :line-count (length orig-lines) (length result-lines))
+            diffs))
+    (nreverse diffs)))
+
 ;;;; Tests
 
 (describe "E2E: buffer lifecycle"
@@ -107,14 +125,12 @@
         (with-current-buffer src
           (expect (line-number-at-pos) :to-equal 5)))))
 
-  (describe "surgical precision"
-    ;; The critical test: a single edit must produce exactly one
-    ;; line difference in the source. No collateral damage.
-    (it "single paragraph edit changes only that paragraph"
-      (let* ((md (concat "# Title\n\n"
-                         "First paragraph.\n\n"
-                         "Second paragraph with old word.\n\n"
-                         "Third paragraph.\n"))
+  (describe "surgical precision (diff-buffer-with-file simulation)"
+    ;; Every test: make one edit, verify ONLY that line changed.
+    ;; Uses el-prisma-e2e--diff-lines to simulate diff-buffer-with-file.
+
+    (it "edit paragraph in simple doc"
+      (let* ((md "# Title\n\nFirst para.\n\nSecond old para.\n\nThird para.\n")
              (src (el-prisma-e2e--make-md-buffer "test.md" md))
              (mirror (with-current-buffer src (el-prisma-convert))))
         (push mirror el-prisma-e2e--buffers)
@@ -122,26 +138,34 @@
           (goto-char (point-min))
           (search-forward "old")
           (replace-match "new")
-          (let ((el-prisma--skip-kill-confirm t)
-                (el-prisma-validate-on-commit nil))
-            (el-prisma-commit)))
-        (let* ((result (with-current-buffer src (buffer-string)))
-               (orig-lines (split-string md "\n"))
-               (result-lines (split-string result "\n"))
-               (diff-count 0))
-          (cl-loop for a in orig-lines
-                   for b in result-lines
-                   unless (string= a b) do (cl-incf diff-count))
-          ;; Exactly one line should differ
-          (expect diff-count :to-equal 1)
-          ;; And it should contain our edit
-          (expect result :to-match "new word")
-          ;; And the other lines should be intact
-          (expect result :to-match "# Title")
-          (expect result :to-match "First paragraph")
-          (expect result :to-match "Third paragraph"))))
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((diffs (el-prisma-e2e--diff-lines
+                      md (with-current-buffer src (buffer-string)))))
+          (expect (length diffs) :to-equal 1)
+          (expect (caddar diffs) :to-match "new"))))
 
-    (it "single edit in complex document - no collateral damage"
+    (it "edit heading in complex doc"
+      (let* ((md (concat "# Title\n\n"
+                         "Para.\n\n"
+                         "| A |\n|---|\n| 1 |\n\n"
+                         "> quote\n\n"
+                         "---\n\n"
+                         "```py\ncode()\n```\n\n"
+                         "Last.\n"))
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "Title")
+          (replace-match "Changed")
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((diffs (el-prisma-e2e--diff-lines
+                      md (with-current-buffer src (buffer-string)))))
+          (expect (length diffs) :to-equal 1)
+          (expect (caddar diffs) :to-match "Changed"))))
+
+    (it "edit paragraph among tables and code blocks"
       (let* ((md (concat "# Heading\n\n"
                          "Paragraph with **bold** and *italic*.\n\n"
                          "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
@@ -149,43 +173,84 @@
                          "---\n\n"
                          "- list item\n\n"
                          "```python\ncode()\n```\n\n"
-                         "Edit old word here.\n\n"
+                         "Edit target word here.\n\n"
                          "[link](http://example.com)\n"))
              (src (el-prisma-e2e--make-md-buffer "test.md" md))
              (mirror (with-current-buffer src (el-prisma-convert))))
         (push mirror el-prisma-e2e--buffers)
         (with-current-buffer mirror
           (goto-char (point-min))
-          (search-forward "old word")
-          (replace-match "new word")
-          (let ((el-prisma--skip-kill-confirm t)
-                (el-prisma-validate-on-commit nil))
-            (el-prisma-commit)))
-        (let* ((result (with-current-buffer src (buffer-string)))
-               (orig-lines (split-string md "\n"))
-               (result-lines (split-string result "\n"))
-               (diff-count 0)
-               (diff-lines nil))
-          (cl-loop for a in orig-lines
-                   for b in result-lines
-                   for i from 1
-                   unless (string= a b)
-                   do (cl-incf diff-count)
-                      (push i diff-lines))
-          ;; At most 1 line should differ
-          (expect diff-count :to-be-less-than 2)
-          ;; Same line count
-          (expect (length result-lines) :to-equal (length orig-lines))
-          ;; All elements preserved
-          (expect result :to-match "# Heading")
-          (expect result :to-match "\\*\\*bold\\*\\*")
-          (expect result :to-match "| A | B |")
-          (expect result :to-match "> blockquote")
-          (expect result :to-match "---")
-          (expect result :to-match "- list item")
-          (expect result :to-match "code()")
-          (expect result :to-match "\\[link\\]")
-          (expect result :to-match "new word")))))
+          (search-forward "target word")
+          (replace-match "CHANGED word")
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((diffs (el-prisma-e2e--diff-lines
+                      md (with-current-buffer src (buffer-string)))))
+          (expect (length diffs) :to-equal 1)
+          (expect (caddar diffs) :to-match "CHANGED"))))
+
+    (it "edit list item preserves everything else"
+      (let* ((md "# Title\n\n- first\n- target item\n- third\n\nAfter.\n")
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "target")
+          (replace-match "CHANGED")
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((diffs (el-prisma-e2e--diff-lines
+                      md (with-current-buffer src (buffer-string)))))
+          ;; List is one node, so the whole list may be re-rendered
+          ;; but the content must be preserved
+          (expect (length diffs) :to-be-less-than 5)
+          (let ((result (with-current-buffer src (buffer-string))))
+            (expect result :to-match "CHANGED")
+            (expect result :to-match "first")
+            (expect result :to-match "third")
+            (expect result :to-match "After")))))
+
+    (it "edit code block body preserves surroundings"
+      (let* ((md "# Title\n\nBefore.\n\n```elisp\n(old-fn)\n```\n\nAfter.\n")
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "(old-fn)")
+          (replace-match "(new-fn)")
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((diffs (el-prisma-e2e--diff-lines
+                      md (with-current-buffer src (buffer-string)))))
+          (expect (length diffs) :to-be-less-than 2)
+          (let ((result (with-current-buffer src (buffer-string))))
+            (expect result :to-match "(new-fn)")
+            (expect result :to-match "Before")
+            (expect result :to-match "After")))))
+
+    (it "no-edit commit leaves source byte-identical"
+      (let* ((md "# Title\n\n| A |\n|---|\n| 1 |\n\nText.\n")
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          (expect result :to-equal md))))
+
+    (it "edit in Org source, commit back to Org"
+      (let* ((org "* Title\n\nSome /italic/ and *bold*.\n\n- item\n\nTarget word.\n")
+             (src (el-prisma-e2e--make-org-buffer "test.org" org))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "Target")
+          (replace-match "CHANGED")
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((diffs (el-prisma-e2e--diff-lines
+                      org (with-current-buffer src (buffer-string)))))
+          (expect (length diffs) :to-equal 1)
+          (expect (caddar diffs) :to-match "CHANGED")))))
 
   (describe "el-prisma-convert"
     (it "creates a mirror buffer from markdown source"
