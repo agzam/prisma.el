@@ -48,15 +48,6 @@
   :type '(alist :key-type symbol :value-type symbol)
   :group 'el-prisma)
 
-(defcustom el-prisma-validate-on-commit nil
-  "When non-nil, run round-trip validation before committing.
-Disabled by default because the diff+patch architecture already
-preserves unchanged regions byte-for-byte, making whole-document
-validation redundant. Minor normalization differences (whitespace,
-blank lines) will always exist and produce false positives."
-  :type 'boolean
-  :group 'el-prisma)
-
 (defcustom el-prisma-display-action
   '(display-buffer-same-window)
   "Display action for showing the mirror buffer."
@@ -400,8 +391,12 @@ When a region is active, converts only the selected region."
            (target-pos (el-prisma--map-position
                         source-pos
                         (el-prisma-model-children source-ast)
-                        ;; Use render map for position mapping
-                        (mapcar #'cadr render-map))))
+                        ;; Synthetic nodes with mirror byte positions
+                        (mapcar (lambda (entry)
+                                  (list :type 'mirror-pos
+                                        :start (nth 2 entry)
+                                        :end (nth 3 entry)))
+                                render-map))))
       (with-current-buffer mirror-buf
         (let ((inhibit-read-only t))
           (erase-buffer)
@@ -426,7 +421,8 @@ When a region is active, converts only the selected region."
 
 (defun el-prisma--apply-patch-ops (source-text ops)
   "Apply patch OPS to SOURCE-TEXT in reverse position order.
-Each op is (START END REPLACEMENT). Preserves trailing newlines."
+Each op is (START END REPLACEMENT). Preserves trailing whitespace
+pattern from the original source range."
   (let ((sorted (sort (copy-sequence ops)
                       (lambda (a b) (> (car a) (car b))))))
     (dolist (op sorted)
@@ -434,10 +430,11 @@ Each op is (START END REPLACEMENT). Preserves trailing newlines."
              (end (nth 1 op))
              (replacement (nth 2 op))
              (original (substring source-text start end))
-             (fixed (if (and (string-suffix-p "\n" original)
-                             (not (string-suffix-p "\n" replacement)))
-                        (concat replacement "\n")
-                      replacement)))
+             ;; Preserve the original's trailing newline pattern
+             (orig-trail (if (string-match "\n+\\'" original)
+                             (match-string 0 original) ""))
+             (repl-trimmed (replace-regexp-in-string "\n+\\'" "" replacement))
+             (fixed (concat repl-trimmed orig-trail)))
         (setq source-text
               (concat (substring source-text 0 start)
                       fixed
@@ -465,7 +462,12 @@ Each op is (START END REPLACEMENT). Preserves trailing newlines."
                       (point-min) (point-max)))
          (target-pos (el-prisma--map-position
                       mirror-pos
-                      (mapcar #'cadr render-map)
+                      ;; Synthetic nodes with mirror byte positions
+                      (mapcar (lambda (entry)
+                                (list :type 'mirror-pos
+                                      :start (nth 2 entry)
+                                      :end (nth 3 entry)))
+                              render-map)
                       (el-prisma-model-children source-ast))))
     (unless (buffer-live-p source-buf)
       (error "el-prisma: source buffer no longer exists"))
@@ -553,59 +555,6 @@ Each op is (START END REPLACEMENT). Preserves trailing newlines."
       (princ (format "Inserted: %d node(s)\n" (length (plist-get diff :inserted))))
       (princ (format "Deleted:  %d node(s)\n" (length (plist-get diff :deleted))))
       (princ (format "Unchanged: %d node(s)\n" (length (plist-get diff :unchanged)))))))
-
-;;;; Round-trip validation
-
-(defun el-prisma--normalize-whitespace (text)
-  "Collapse runs of blank lines to single blank lines in TEXT."
-  (replace-regexp-in-string "\n\\{3,\\}" "\n\n" text))
-
-(defun el-prisma--validate-round-trip (mirror-text target-fmt source-fmt)
-  "Validate that MIRROR-TEXT round-trips losslessly.
-Converts mirror (TARGET-FMT) -> source (SOURCE-FMT) -> back to TARGET-FMT
-and checks for structural differences. Whitespace normalization
-(collapsed blank lines) is not flagged. Signals `user-error' if
-user declines."
-  (condition-case err
-      (let* ((mirror-ast (el-prisma-parse target-fmt mirror-text))
-             (source-rendered (el-prisma-render source-fmt mirror-ast))
-             (re-ast (el-prisma-parse source-fmt source-rendered))
-             (re-rendered (el-prisma-render target-fmt re-ast))
-             (norm-mirror (el-prisma--normalize-whitespace mirror-text))
-             (norm-re (el-prisma--normalize-whitespace re-rendered)))
-        (unless (string= norm-mirror norm-re)
-          (let ((diff-summary (el-prisma--diff-summary norm-mirror norm-re)))
-            (with-output-to-temp-buffer "*el-prisma-validation*"
-              (princ "Round-trip validation found structural differences:\n\n")
-              (princ diff-summary))
-            (unless (yes-or-no-p
-                     "Structural differences detected. Commit anyway? ")
-              (user-error "Commit cancelled due to validation failure")))))
-    (user-error (signal (car err) (cdr err)))
-    (error nil)))
-
-(defun el-prisma--diff-summary (text-a text-b)
-  "Return a human-readable summary of differences between TEXT-A and TEXT-B."
-  (let ((lines-a (split-string text-a "\n"))
-        (lines-b (split-string text-b "\n"))
-        (diffs nil)
-        (ai 0) (bi 0))
-    (while (and (< ai (length lines-a)) (< bi (length lines-b))
-                (< (length diffs) 8))
-      (if (string= (nth ai lines-a) (nth bi lines-b))
-          (progn (cl-incf ai) (cl-incf bi))
-        (push (format "Line %d changed:\n  before: %s\n  after:  %s"
-                      (1+ ai)
-                      (truncate-string-to-width (nth ai lines-a) 72)
-                      (truncate-string-to-width (nth bi lines-b) 72))
-              diffs)
-        (cl-incf ai) (cl-incf bi)))
-    (when (> (length diffs) 0)
-      (setq diffs (nreverse diffs)))
-    (if diffs
-        (mapconcat #'identity diffs "\n\n")
-      (format "Length differs: %d vs %d characters"
-              (length text-a) (length text-b)))))
 
 ;;;; Mirror minor mode
 

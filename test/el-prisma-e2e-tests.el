@@ -104,8 +104,7 @@ Returns list of (LINE-NUM ORIGINAL CHANGED) for differing lines."
           (forward-line 3)
           (when (search-forward "Old" nil t)
             (replace-match "New"))
-          (let ((el-prisma--skip-kill-confirm t)
-                (el-prisma-validate-on-commit nil))
+          (let ((el-prisma--skip-kill-confirm t))
             (el-prisma-commit)))
         (with-current-buffer src
           ;; Should be on or near line 4 where we were editing
@@ -123,7 +122,29 @@ Returns list of (LINE-NUM ORIGINAL CHANGED) for differing lines."
             (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
               (el-prisma-cancel))))
         (with-current-buffer src
-          (expect (line-number-at-pos) :to-equal 5)))))
+          (expect (line-number-at-pos) :to-equal 5))))
+
+    (it "convert places cursor on correct heading in complex doc"
+      (let* ((md (concat "# Title\n\n"
+                         "Intro paragraph.\n\n"
+                         "```python\ndef foo():\n    pass\n```\n\n"
+                         "### Step 1\n\nFirst content.\n\n"
+                         "### Step 2\n\nSecond content.\n"))
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             mirror)
+        (with-current-buffer src
+          ;; Position cursor at "### Step 2"
+          (goto-char (point-min))
+          (search-forward "### Step 2")
+          (beginning-of-line)
+          (setq mirror (el-prisma-convert)))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          ;; Should be on or near "*** Step 2", not displaced by
+          ;; code block size differences
+          (let ((cur-line (buffer-substring
+                           (line-beginning-position) (line-end-position))))
+            (expect cur-line :to-match "Step 2"))))))
 
   (describe "surgical precision (diff-buffer-with-file simulation)"
     ;; Every test: make one edit, verify ONLY that line changed.
@@ -237,7 +258,7 @@ Returns list of (LINE-NUM ORIGINAL CHANGED) for differing lines."
         (let ((result (with-current-buffer src (buffer-string))))
           (expect result :to-equal md))))
 
-    (xit "rearranging blocks preserves blank lines"
+    (it "rearranging blocks with org-metaup preserves blank lines"
       (let* ((md (concat "# Title\n\n"
                          "### Step 1\n\n"
                          "First content.\n\n"
@@ -249,35 +270,89 @@ Returns list of (LINE-NUM ORIGINAL CHANGED) for differing lines."
              (mirror (with-current-buffer src (el-prisma-convert))))
         (push mirror el-prisma-e2e--buffers)
         (with-current-buffer mirror
-          ;; Swap step 1 and step 2 blocks
+          ;; Use org-metaup to move Step 2 above Step 1
           (goto-char (point-min))
-                      (let ((step1-start (progn (search-forward "*** Step 1") (beginning-of-line) (point)))
-                          (step2-start (progn (search-forward "*** Step 2") (beginning-of-line) (point)))
-                          (step2-end (progn (search-forward "Second content.") (end-of-line) (point))))
-            (let ((step2-text (buffer-substring step2-start step2-end)))
-              ;; Delete step 2
-              (delete-region step2-start step2-end)
-              ;; Insert before step 1
-              (goto-char step1-start)
-              (insert step2-text "\n\n")))
+          (search-forward "*** Step 2")
+          (beginning-of-line)
+          (org-metaup)
           (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
-        (let* ((result (with-current-buffer src (buffer-string)))
-               (lines (split-string result "\n")))
-          ;; Step 2 should now come before Step 1
-          (let ((s2-pos (cl-position "### Step 2" lines :test #'string=))
-                (s1-pos (cl-position "### Step 1" lines :test #'string=))
-                (s3-pos (cl-position "### Step 3" lines :test #'string=)))
-            (expect s2-pos :to-be-less-than s1-pos)
-            ;; All steps still present
-            (expect s1-pos :not :to-be nil)
-            (expect s3-pos :not :to-be nil))
-          ;; Check no consecutive blank lines were eaten -
-          ;; each heading should be preceded by a blank line
-          (expect result :to-match "\n\n### Step")
+        (let ((result (with-current-buffer src (buffer-string))))
+          ;; Step 2 now before Step 1
+          (expect (string-match-p "### Step 2" result) :to-be-truthy)
+          (expect (string-match "### Step 2" result)
+                  :to-be-less-than (string-match "### Step 1" result))
+          ;; All steps present
+          (expect result :to-match "### Step 1")
+          (expect result :to-match "### Step 3")
+          ;; Blank lines preserved before each heading
+          (expect result :to-match "\n\n### Step 2")
+          (expect result :to-match "\n\n### Step 1")
+          (expect result :to-match "\n\n### Step 3")
           ;; Content preserved
           (expect result :to-match "First content")
           (expect result :to-match "Second content")
           (expect result :to-match "Third content"))))
+
+    (it "rearranging blocks with org-metadown preserves blank lines"
+      (let* ((md (concat "# Title\n\n"
+                         "### Step 1\n\n"
+                         "First content.\n\n"
+                         "### Step 2\n\n"
+                         "Second content.\n\n"
+                         "### Step 3\n\n"
+                         "Third content.\n"))
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          ;; Move Step 1 below Step 2
+          (goto-char (point-min))
+          (search-forward "*** Step 1")
+          (beginning-of-line)
+          (org-metadown)
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          ;; Step 2 now before Step 1
+          (expect (string-match "### Step 2" result)
+                  :to-be-less-than (string-match "### Step 1" result))
+          ;; Blank lines preserved
+          (expect result :to-match "\n\n### Step 2")
+          (expect result :to-match "\n\n### Step 1")
+          (expect result :to-match "\n\n### Step 3"))))
+
+    (it "rearranging in doc with code blocks and lists preserves structure"
+      (let* ((md (concat "# Title\n\n"
+                         "### Step 1\n\n"
+                         "1. Go to https://example.com/\n"
+                         "2. Click \"Build\"\n\n"
+                         "### Step 2\n\n"
+                         "- `read:admin` - Read data\n"
+                         "- `write:admin` - Write data\n\n"
+                         "### Step 3\n\n"
+                         "```bash\nexport ID=\"your-id\"\n```\n"))
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "*** Step 2")
+          (beginning-of-line)
+          (org-metaup)
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          ;; Step 2 before Step 1
+          (expect (string-match "### Step 2" result)
+                  :to-be-less-than (string-match "### Step 1" result))
+          ;; All sections present
+          (expect result :to-match "### Step 3")
+          ;; Blank lines preserved
+          (expect result :to-match "\n\n### Step 1")
+          (expect result :to-match "\n\n### Step 2")
+          (expect result :to-match "\n\n### Step 3")
+          ;; Content preserved
+          (expect result :to-match "read:admin")
+          (expect result :to-match "Go to https://example.com/")
+          (expect result :to-match "export ID"))))
 
     (it "edit in Org source, commit back to Org"
       (let* ((org "* Title\n\nSome /italic/ and *bold*.\n\n- item\n\nTarget word.\n")
@@ -508,40 +583,6 @@ Returns list of (LINE-NUM ORIGINAL CHANGED) for differing lines."
           (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) nil)))
             (expect (el-prisma-commit) :to-throw 'user-error))))))
 
-  (describe "round-trip validation"
-    (it "validation passes for clean round-trip"
-      (let* ((src (el-prisma-e2e--make-md-buffer
-                   "test.md" "# Title\n\nSimple paragraph.\n"))
-             (mirror (with-current-buffer src
-                       (el-prisma-convert))))
-        (push mirror el-prisma-e2e--buffers)
-        (with-current-buffer mirror
-          (goto-char (point-min))
-          (when (search-forward "Simple" nil t)
-            (replace-match "Changed"))
-          ;; Should commit without validation failure
-          (let ((el-prisma-validate-on-commit t)
-                (el-prisma--skip-kill-confirm t))
-            (el-prisma-commit)))
-        (with-current-buffer src
-          (expect (buffer-string) :to-match "Changed"))))
-
-    (it "can disable validation"
-      (let* ((src (el-prisma-e2e--make-md-buffer
-                   "test.md" "# Title\n\nText.\n"))
-             (mirror (with-current-buffer src
-                       (el-prisma-convert))))
-        (push mirror el-prisma-e2e--buffers)
-        (with-current-buffer mirror
-          (goto-char (point-min))
-          (when (search-forward "Text" nil t)
-            (replace-match "New"))
-          (let ((el-prisma-validate-on-commit nil)
-                (el-prisma--skip-kill-confirm t))
-            (el-prisma-commit)))
-        (with-current-buffer src
-          (expect (buffer-string) :to-match "New")))))
-
   (describe "Org->Markdown direction"
     (it "converts org buffer to markdown mirror"
       (let* ((src (el-prisma-e2e--make-org-buffer
@@ -568,8 +609,7 @@ Returns the patched source string."
       (goto-char (point-min))
       (when (search-forward search nil t)
         (replace-match replace))
-      (let ((el-prisma--skip-kill-confirm t)
-            (el-prisma-validate-on-commit nil))
+      (let ((el-prisma--skip-kill-confirm t))
         (el-prisma-commit)))
     (with-current-buffer src (buffer-string))))
 
@@ -584,8 +624,7 @@ Returns the patched source string."
       (goto-char (point-min))
       (when (search-forward search nil t)
         (replace-match replace))
-      (let ((el-prisma--skip-kill-confirm t)
-            (el-prisma-validate-on-commit nil))
+      (let ((el-prisma--skip-kill-confirm t))
         (el-prisma-commit)))
     (with-current-buffer src (buffer-string))))
 

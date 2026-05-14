@@ -35,6 +35,7 @@ test: $(ELPA_DIR)
 	-l test/el-prisma-diff-tests.el \
 	-l test/el-prisma-patch-tests.el \
 	-l test/el-prisma-org-tests.el \
+	-l test/el-prisma-text-diff-tests.el \
 	--funcall buttercup-run
 
 test-e2e: $(ELPA_DIR)
@@ -47,6 +48,7 @@ test-e2e: $(ELPA_DIR)
 	-l test/el-prisma-patch-tests.el \
 	-l test/el-prisma-org-tests.el \
 	-l test/el-prisma-md-tests.el \
+	-l test/el-prisma-text-diff-tests.el \
 	-l test/el-prisma-e2e-tests.el \
 	--funcall buttercup-run
 

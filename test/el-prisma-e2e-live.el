@@ -81,8 +81,7 @@
        (goto-char (point-min))
        (search-forward "Original")
        (replace-match "Modified")
-       (let ((el-prisma--skip-kill-confirm t)
-             (el-prisma-validate-on-commit nil))
+       (let ((el-prisma--skip-kill-confirm t))
          (el-prisma-commit)))
      ;; Verify source patched
      (with-current-buffer src
