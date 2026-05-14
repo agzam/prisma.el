@@ -120,6 +120,23 @@ The patch engine's `el-prisma-patch--apply-ops` remains the same.
 Build the new pipeline first (1-5), verify with tests (7), then clean up (6).
 Each step is independently testable.
 
+## Known issue: blank lines lost during block rearrangement
+
+When using org-move-subtree-up/down to rearrange blocks in the mirror,
+the commit loses blank lines between blocks. Root cause:
+`el-prisma--merge-adjacent-nodes` joins the mirror text of adjacent
+changed nodes with `\n\n`, but the MD renderer's output for the merged
+block may not produce the same inter-block spacing as the original source.
+
+The fix needs to happen in how merged ops handle the source byte range.
+Currently the merged group covers `[first-node-start, last-node-end)` but
+the inter-node gaps (blank lines in source) between those nodes are included
+in that range. The replacement text must also include those gaps.
+
+Reproduction: open a markdown file with `### Step 1` / `### Step 2` sections,
+convert to Org, `org-move-subtree-up` on Step 2, commit. The blank line before
+Step 1 (now second) is missing.
+
 ## Not in scope
 
 - JSON/EDN conversion (phase 2, unchanged)
