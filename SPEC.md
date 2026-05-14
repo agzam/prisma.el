@@ -126,26 +126,41 @@ Compiled libraries go in the tree-sitter load path
 Source Buffer          Mirror Buffer
 (Markdown)              (Org)
     |                     |
-    v                     v
- [Parser]             [Parser]
+    v                     |
+ [Parser]                 |
     |                     |
     v                     v
- AST_1 ---- diff ---- AST_2
- (stored)              (on commit)
-    |                     |
-    |    [Patch Engine]   |
-    |         |           |
-    v         v           v
- Patched Source Buffer
+ AST_1 --- [Renderer] --> mirror text (stored)
+ (stored)                 |
+                     user edits
+                          |
+                          v
+              text diff (stored mirror vs edited)
+                          |
+                          v
+              changed regions mapped to AST_1 nodes
+                          |
+                          v
+              re-parse changed regions in target format
+                          |
+                          v
+              render changed nodes to source format
+                          |
+                          v
+              patch source at original byte ranges
 ```
+
+The key insight: we never parse the entire mirror buffer with a different
+parser. We compare the mirror against itself (before vs after editing) to
+find what changed, then map those changes back to source AST nodes.
 
 ### Components
 
 1. Parser Layer - extracts positioned AST from source text
 2. Intermediary Model - unified node types shared across formats
-3. Renderer Layer - emits target format text from the model
-4. Diff Engine - structural comparison of two ASTs
-5. Patch Engine - applies diffs back to source using byte ranges
+3. Renderer Layer - emits target format text with a render map (source node -> mirror byte range)
+4. Text Diff - compares original mirror text vs edited mirror text
+5. Patch Engine - applies changes back to source using byte ranges from render map
 6. Buffer Manager - mirror buffer lifecycle, commit/cancel
 
 ---
@@ -309,71 +324,49 @@ of renderer output - so formatting preferences are preserved.
 
 ---
 
-## Diff Engine
+## Change Detection
 
-Structural diff on the intermediary model. Compares AST_1 (from initial parse)
-with AST_2 (from parsing the edited mirror buffer).
+Instead of parsing the mirror buffer with a second parser and diffing two
+ASTs (which fails because different parsers produce structurally different
+ASTs), we compare the mirror text against itself.
 
-### Algorithm
+### Render map
 
-Document trees are shallow (typically 3-5 levels), so a simple recursive
-approach suffices:
+During the initial render (source AST -> mirror text), the renderer records
+a render map: a list of `(source-node-index mirror-start mirror-end)` entries.
+This maps each top-level source AST node to its byte range in the rendered
+mirror text. Stored as buffer-local in the mirror buffer.
 
-1. Align top-level blocks by (type, position-hint, content-hash)
-2. For matched blocks: recursively diff children
-3. Detect: unchanged, modified, inserted, deleted nodes
+### Finding changes
 
-### Node matching strategy
+On commit:
+1. Text-diff the stored original mirror text against the current mirror content
+2. Each changed byte range in the mirror maps (via render map) to one or more
+   source AST nodes
+3. For each affected source node: extract the corresponding region from the
+   edited mirror text, parse it in the target format, render to source format
 
-Nodes are matched by a composite key:
-- Same type + same content hash -> unchanged (no diffing of children needed)
-- Same type + similar position -> potentially modified (diff children)
-- No match -> inserted or deleted
+This approach:
+- Never compares two different parsers' outputs
+- Only parses changed regions, not the entire mirror
+- Is O(changed-regions) not O(document-size)
+- Handles any document regardless of parser disagreements
 
-Content hash: SHA-1 of the rendered text of the node in the target format.
-Fast equality check before expensive structural comparison.
+### Result
 
-### Diff result
-
-```elisp
-(:unchanged <list of (ast1-node . ast2-node) pairs>
- :modified  <list of (ast1-node . ast2-node) pairs>  ; same node, different content
- :inserted  <list of ast2-nodes>                      ; new in mirror
- :deleted   <list of ast1-nodes>)                     ; removed from mirror
-```
+A list of patch operations: `(source-start source-end replacement-text)`.
+Unchanged source nodes produce no operations.
 
 ---
 
 ## Patch Engine
 
-Takes a diff result and applies it to the source buffer.
-
-### For unchanged nodes
-
-No action. Original source bytes remain untouched.
-
-### For modified nodes
-
-1. Look up ast1-node's :start and :end in source buffer
-2. Render ast2-node to source format
-3. Replace bytes [start, end) with rendered text
-
-### For inserted nodes
-
-1. Determine insertion point from surrounding unchanged/modified nodes
-2. Render the new node to source format
-3. Insert at the computed position
-
-### For deleted nodes
-
-1. Look up the node's :start and :end in source buffer
-2. Delete bytes [start, end)
-
-### Offset management
+Takes a list of patch operations and applies them to the source buffer.
 
 Patches applied in reverse source-position order (bottom of buffer first)
-so earlier byte ranges remain valid. Alternatively, maintain a cumulative
-offset accumulator.
+so earlier byte ranges remain valid. Each operation replaces
+bytes [start, end) with new text. Trailing newlines from the original
+region are preserved if the replacement doesn't include one.
 
 ---
 
@@ -384,30 +377,30 @@ offset accumulator.
 1. User invokes `el-prisma-convert` in source buffer
 2. Detect source format (from major mode or explicit argument)
 3. Look up target format from conversion map
-4. Parse source -> AST_1
-5. Render AST_1 -> target format text
+4. Parse source -> AST
+5. Render AST -> target format text + render map (node-index -> mirror byte range)
 6. Create mirror buffer named `*prisma:<source-name>:<target-format>*`
 7. Insert rendered text, set appropriate major mode
 8. Store as buffer-local in mirror:
    - `el-prisma--source-buffer`: reference to source buffer
-   - `el-prisma--source-ast`: AST_1
+   - `el-prisma--source-ast`: AST
    - `el-prisma--source-format`: source format symbol
    - `el-prisma--target-format`: target format symbol
+   - `el-prisma--mirror-text`: original rendered mirror text (for diffing on commit)
+   - `el-prisma--render-map`: list of (node-index mirror-start mirror-end)
 9. Enable `el-prisma-mirror-mode` (minor mode with commit/cancel bindings)
-10. Display mirror buffer (same window or split, configurable)
+10. Switch to mirror buffer in same window, preserve scroll position
 
 ### Commit flow
 
 1. User invokes `el-prisma-commit` in mirror buffer
-2. Parse mirror content -> AST_2
-3. Diff AST_1 vs AST_2
-4. If only unchanged nodes: message "No changes", done
-5. Optional round-trip validation:
-   a. Render AST_2 -> source format -> re-parse -> AST_3
-   b. Diff AST_2 vs AST_3
-   c. If differences: warn user with details, ask to proceed or abort
+2. Text-diff stored original mirror text vs current mirror content
+3. If no changes: message "No changes", done
+4. Map changed mirror regions to source AST nodes via render map
+5. For each affected node: extract edited mirror text, parse in target
+   format, render to source format
 6. Apply patches to source buffer via Patch Engine
-7. Kill mirror buffer
+7. Kill mirror buffer, switch to source in same window
 
 ### Cancel flow
 
@@ -427,22 +420,10 @@ When invoked with an active region:
 
 ## Round-trip Validation
 
-An optional safety check on commit. Verifies that the back-converted content
-can be re-converted to the mirror format without loss.
-
-```
-Mirror (Org) -> parse -> AST_2 -> render to MD -> parse -> AST_3 -> render to Org
-Compare: mirror text vs re-rendered Org text
-```
-
-If they differ, the user sees a diff showing what would change. They can:
-- Commit anyway (accept the difference)
-- Return to mirror buffer and adjust
-- Cancel entirely
-
-This is a safety net. With the passthrough mechanism, it should rarely trigger.
-
-Controlled by: `el-prisma-validate-on-commit` (default: t)
+Removed. The text-diff approach (comparing mirror against itself) eliminates
+the class of problems that validation was designed to catch. Since we never
+re-parse the entire mirror with a different parser, there are no structural
+disagreements to validate against.
 
 ---
 

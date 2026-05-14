@@ -163,16 +163,20 @@ whitespace/EOL/punctuation. Content must not start or end with space."
     (let ((i (1+ pos))
           (found nil))
       (while (and (< i len) (not found))
-        (when (and (= (aref text i) delimiter)
-                   ;; Content must not end with space
-                   (not (= (aref text (1- i)) ?\s))
-                   ;; Post-condition: EOL or followed by whitespace/punctuation
-                   (or (= (1+ i) len)
-                       (let ((next (aref text (1+ i))))
-                         (or (memq next '(?\s ?\t ?\n))
-                             (memq next '(?\) ?\] ?\} ?\" ?' ?- ?. ?, ?\; ?:))))))
-          (setq found (1+ i)))
-        (setq i (1+ i)))
+        (if (= (aref text i) delimiter)
+            ;; Found the delimiter char - check closing conditions
+            (if (and ;; Content must not end with space
+                     (not (= (aref text (1- i)) ?\s))
+                     ;; Post-condition: EOL or followed by whitespace/punctuation
+                     (or (= (1+ i) len)
+                         (let ((next (aref text (1+ i))))
+                           (or (memq next '(?\s ?\t ?\n))
+                               (memq next '(?\) ?\] ?\} ?\" ?' ?- ?. ?, ?\; ?:))))))
+                ;; Valid closing delimiter
+                (setq found (1+ i))
+              ;; Delimiter char inside content - not valid emphasis
+              (setq i len))
+          (setq i (1+ i))))
       (when found
         (cons pos found)))))
 

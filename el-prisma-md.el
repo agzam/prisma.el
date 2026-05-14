@@ -292,15 +292,13 @@ Uses INLINE-ROOT to find structural inline elements, fills gaps with text."
           :url url :alt alt
           :start start :end end :source-format 'markdown)))
       ("strikethrough"
-       (let* ((range (el-prisma-ts-content-range node "emphasis_delimiter"))
-              (nested (seq-filter
-                       (lambda (c)
-                         (not (string= (treesit-node-type c)
-                                       "emphasis_delimiter")))
-                       (treesit-node-children node)))
-              (cs (if range (car range) (1+ start)))
-              (ce (if range (cdr range) (1- end)))
-              (children (el-prisma-md--fill-text-gaps nested cs ce text)))
+       (let* ((cs (+ start 2))
+              (ce (- end 2))
+              (inner-text (substring text cs ce))
+              (children (list (el-prisma-model-text
+                               :value inner-text
+                               :start cs :end ce
+                               :source-format 'markdown))))
          (el-prisma-model-strike
           :children children
           :start start :end end :source-format 'markdown)))
