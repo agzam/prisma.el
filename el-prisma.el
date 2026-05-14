@@ -486,10 +486,21 @@ pattern from the original source range."
           (message "el-prisma: no changes to commit"))
       (let* ((changed (el-prisma--find-changed-nodes
                        old-mirror new-mirror render-map))
-             (ops (el-prisma--build-patch-ops
-                   changed source-fmt target-fmt))
-             (patched (el-prisma--apply-patch-ops source-text ops))
+             (ops (when changed
+                    (el-prisma--build-patch-ops
+                     changed source-fmt target-fmt)))
+             (patched (if ops
+                         (el-prisma--apply-patch-ops source-text ops)
+                       source-text))
              (nchanged (length changed)))
+        ;; DATA LOSS SAFEGUARD: mirror was modified (we passed the
+        ;; string= check above) but patch produced no source change.
+        ;; This means the pipeline failed to propagate edits. NEVER
+        ;; silently kill the mirror - the user's work would be lost.
+        (when (string= patched source-text)
+          (error "el-prisma: edits detected in mirror but patch produced \
+no source changes. Mirror preserved - your edits are safe. \
+Please report this as a bug"))
         (with-current-buffer source-buf
           (let ((inhibit-read-only t))
             (if region-bounds

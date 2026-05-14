@@ -583,6 +583,41 @@ Returns list of (LINE-NUM ORIGINAL CHANGED) for differing lines."
           (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) nil)))
             (expect (el-prisma-commit) :to-throw 'user-error))))))
 
+  (describe "data loss safeguard"
+    (it "refuses to kill mirror when patch produces no source change"
+      (let* ((md "# Title\n\nParagraph.\n")
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          ;; Edit only whitespace in separator region (not covered by render map)
+          (goto-char (point-max))
+          (insert "\n")
+          ;; Mock find-changed-nodes to return nil (simulating the failure)
+          (cl-letf (((symbol-function 'el-prisma--find-changed-nodes)
+                     (lambda (&rest _) nil)))
+            (expect (el-prisma-commit) :to-throw 'error)))
+        ;; Mirror must survive - user's edits are safe
+        (expect (buffer-live-p mirror) :to-be-truthy)))
+
+    (it "mirror survives when pipeline fails to propagate edits"
+      (let* ((md "# Title\n\nOriginal.\n")
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (when (search-forward "Original" nil t)
+            (replace-match "Changed"))
+          ;; Mock apply-patch-ops to return unchanged text (simulating failure)
+          (cl-letf (((symbol-function 'el-prisma--apply-patch-ops)
+                     (lambda (text _ops) text)))
+            (expect (el-prisma-commit) :to-throw 'error)))
+        ;; Mirror alive, source unchanged
+        (expect (buffer-live-p mirror) :to-be-truthy)
+        (with-current-buffer src
+          (expect (buffer-string) :to-equal md)))))
+
   (describe "Org->Markdown direction"
     (it "converts org buffer to markdown mirror"
       (let* ((src (el-prisma-e2e--make-org-buffer
