@@ -4,36 +4,33 @@ Same content, different spectrum.
 
 * What
 
-El Prisma converts buffer content between formats, creating mirror buffers for editing in your preferred format. It supports lossless round-trip conversion - content survives the full cycle (e.g. Markdown -> Org -> Markdown) with untouched regions remaining byte-identical.
+El Prisma converts buffer content between formats, creating mirror buffers for editing in your preferred format. Edits are surgically patched back into the source - untouched regions remain byte-identical.
 
-Supported conversion pairs:
-- Markdown (GFM) <-> Org
-- JSON <-> EDN
+Currently supported: Markdown (GFM) <-> Org
 
 * Why
 
-Pandoc's format conversion is lossy and opinionated. Tree-sitter grammars vary in quality. El Prisma takes a different approach: it uses a positioned intermediary AST to track exactly what changed during editing, then surgically patches only the modified regions back into the source format. Untouched content is never re-rendered.
+Pandoc's conversion is lossy and opinionated - it normalizes formatting and drops metadata. El Prisma uses a positioned intermediary AST to track exactly what changed, then patches only the modified regions. Your formatting survives.
 
-The core guarantee: your edits in the mirror buffer will never be lost. If a back-conversion would lose data, you'll know before committing.
+Format-specific constructs with no target equivalent pass through as literal text and round-trip verbatim.
 
-* How
-
-In any supported buffer, invoke =el-prisma-convert= to open a mirror buffer in the target format. Edit freely. When done, =el-prisma-commit= converts your changes back to the source format, or =el-prisma-cancel= discards the mirror.
-
-Format-specific constructs that have no equivalent in the target format pass through as literal text. An Org =SCHEDULED:= line in a Markdown-originated buffer simply appears as text - and converts back to the exact same text on commit.
-
-** Usage
+* Usage
 
 #+begin_src emacs-lisp
-;; Convert current Markdown buffer to Org for editing
-M-x el-prisma-convert
+;; In a Markdown buffer:
+M-x el-prisma-convert    ; opens Org mirror in same window
 
-;; After editing, commit changes back
-M-x el-prisma-commit
-
-;; Or discard
-M-x el-prisma-cancel
+;; Edit freely in Org, then:
+C-c C-c                  ; commit changes back to Markdown
+C-c C-k                  ; cancel, discard mirror
+C-c C-p C-d              ; preview diff
 #+end_src
+
+Works in both directions - invoke =el-prisma-convert= in an Org buffer to get a Markdown mirror.
+
+* Prerequisites
+
+Emacs 29.1+ with tree-sitter support. Compiled grammars for =markdown= and =markdown-inline= (from [[https://github.com/tree-sitter-grammars/tree-sitter-markdown][tree-sitter-grammars/tree-sitter-markdown]]).
 
 * License
 

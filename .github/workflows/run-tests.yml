@@ -33,5 +33,23 @@ jobs:
       - name: Run unit tests
         run: make test
 
+      - name: Build tree-sitter grammars
+        run: |
+          git clone --depth 1 https://github.com/tree-sitter-grammars/tree-sitter-markdown.git /tmp/ts-md
+          mkdir -p ~/.emacs.d/tree-sitter
+          cc -shared -fPIC -O2 \
+            -I /tmp/ts-md/tree-sitter-markdown/src \
+            /tmp/ts-md/tree-sitter-markdown/src/parser.c \
+            /tmp/ts-md/tree-sitter-markdown/src/scanner.c \
+            -o ~/.emacs.d/tree-sitter/libtree-sitter-markdown.so
+          cc -shared -fPIC -O2 \
+            -I /tmp/ts-md/tree-sitter-markdown-inline/src \
+            /tmp/ts-md/tree-sitter-markdown-inline/src/parser.c \
+            /tmp/ts-md/tree-sitter-markdown-inline/src/scanner.c \
+            -o ~/.emacs.d/tree-sitter/libtree-sitter-markdown-inline.so
+
+      - name: Run E2E tests
+        run: make test-e2e
+
       - name: Check byte-compilation
         run: make check-compile

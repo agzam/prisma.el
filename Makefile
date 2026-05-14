@@ -6,7 +6,7 @@ EMACS_BATCH = emacs -Q --batch \
 	--eval "(add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\"))" \
 	--eval "(package-initialize)"
 
-.PHONY: help test deps check-autoloads check-compile compile clean
+.PHONY: help test test-e2e test-live deps check-autoloads check-compile compile clean
 
 help:
 	@echo "Available commands:"
@@ -15,13 +15,15 @@ help:
 	@echo "  make compile           Byte-compile the package"
 	@echo "  make check-autoloads   Generate and load autoloads"
 	@echo "  make check-compile     Check for clean byte-compilation"
+	@echo "  make test-live         Run E2E tests via emacsclient"
 	@echo "  make clean             Remove compiled files"
 
 $(ELPA_DIR):
 	@echo "Installing dependencies..."
 	$(EMACS_BATCH) \
 	--eval "(package-refresh-contents)" \
-	--eval "(package-install 'buttercup)"
+	--eval "(package-install 'buttercup)" \
+	--eval "(package-install 'markdown-mode)"
 
 deps: $(ELPA_DIR)
 
@@ -29,7 +31,35 @@ test: $(ELPA_DIR)
 	$(EMACS_BATCH) --directory . \
 	--eval "(setq buttercup-stack-frame-style 'omit)" \
 	-l test/el-prisma-tests.el \
+	-l test/el-prisma-peg-tests.el \
+	-l test/el-prisma-diff-tests.el \
+	-l test/el-prisma-patch-tests.el \
+	-l test/el-prisma-org-tests.el \
 	--funcall buttercup-run
+
+test-e2e: $(ELPA_DIR)
+	$(EMACS_BATCH) --directory . \
+	--eval "(dolist (d '(\"$(HOME)/.emacs.d/.local/cache/tree-sitter\" \"$(HOME)/.emacs.d/tree-sitter\")) (when (file-directory-p d) (push d treesit-extra-load-path)))" \
+	--eval "(setq buttercup-stack-frame-style 'omit)" \
+	-l test/el-prisma-tests.el \
+	-l test/el-prisma-peg-tests.el \
+	-l test/el-prisma-diff-tests.el \
+	-l test/el-prisma-patch-tests.el \
+	-l test/el-prisma-org-tests.el \
+	-l test/el-prisma-md-tests.el \
+	-l test/el-prisma-e2e-tests.el \
+	--funcall buttercup-run
+
+test-live:
+	@echo "Running E2E tests in live Emacs via emacsclient..."
+	@emacsclient -e "(progn \
+	  (add-to-list 'load-path \"$(CURDIR)\") \
+	  (dolist (feat '(el-prisma-model el-prisma-peg el-prisma-ts \
+	                  el-prisma-diff el-prisma-patch \
+	                  el-prisma-md el-prisma-org el-prisma)) \
+	    (when (featurep feat) (unload-feature feat t))) \
+	  (load \"$(CURDIR)/test/el-prisma-e2e-live.el\") \
+	  (el-prisma-e2e-live-run))"
 
 check-autoloads:
 	@echo "Generating and loading autoloads..."
@@ -39,18 +69,20 @@ check-autoloads:
 	--eval "(update-directory-autoloads \"$(CURDIR)\")" \
 	--eval "(load generated-autoload-file nil 'nomessage)"
 
+SRCS = el-prisma.el el-prisma-model.el el-prisma-peg.el el-prisma-diff.el el-prisma-patch.el el-prisma-ts.el el-prisma-md.el el-prisma-org.el
+
 check-compile: $(ELPA_DIR) check-autoloads
 	@echo "Checking byte-compilation..."
 	$(EMACS_BATCH) \
 	--eval "(setq byte-compile-error-on-warn t)" \
 	--eval "(add-to-list 'load-path \".\")" \
-	--eval "(byte-compile-file \"el-prisma.el\")"
+	$(foreach f,$(SRCS),--eval "(byte-compile-file \"$(f)\")")
 
 compile: $(ELPA_DIR)
 	@echo "Byte-compiling package files..."
 	$(EMACS_BATCH) \
 	--eval "(add-to-list 'load-path \".\")" \
-	--eval "(byte-compile-file \"el-prisma.el\")"
+	$(foreach f,$(SRCS),--eval "(byte-compile-file \"$(f)\")")
 
 clean:
 	@echo "Cleaning compiled files..."

@@ -622,9 +622,9 @@ prisma.el/
 ## Implementation Order
 
 ### Phase 1: Foundation
-- [ ] Intermediary model types and constructors
-- [ ] PEG parser engine with position tracking
-- [ ] AST diff algorithm
+- [x] Intermediary model types and constructors
+- [x] PEG parser engine with position tracking
+- [x] AST diff algorithm
 
 ### Phase 2: JSON <-> EDN
 - [ ] JSON parser (tree-sitter)
@@ -634,23 +634,26 @@ prisma.el/
 - [ ] Round-trip tests
 
 ### Phase 3: Markdown <-> Org
-- [ ] Markdown parser (tree-sitter block + inline)
-- [ ] Org PEG grammar for inline content
-- [ ] Org block parser (tree-sitter or PEG)
-- [ ] Markdown renderer
-- [ ] Org renderer
-- [ ] Round-trip tests with passthrough verification
+- [x] Markdown parser (tree-sitter block + inline)
+- [x] Org inline parser (hand-written with emphasis boundary rules)
+- [x] Org block parser (regex-based)
+- [x] Markdown renderer
+- [x] Org renderer
+- [x] Round-trip tests with passthrough verification
 
 ### Phase 4: Buffer Management
-- [ ] Mirror buffer creation and lifecycle
-- [ ] el-prisma-mirror-mode
-- [ ] Commit flow with patch engine
-- [ ] Cancel flow
-- [ ] Round-trip validation
+- [x] Mirror buffer creation and lifecycle
+- [x] el-prisma-mirror-mode
+- [x] Commit flow with patch engine
+- [x] Cancel flow
+- [x] Round-trip validation (optional, off by default)
 - [ ] Region conversion support
 
 ### Phase 5: Polish
-- [ ] Concurrent modification detection
-- [ ] Diff preview command
-- [ ] Customization options
+- [x] Concurrent modification detection
+- [x] Diff preview command
+- [x] Customization options
+- [x] Header-line with keybinding hints
+- [x] AST-based cursor position mapping
+- [x] Vertical scroll position preservation
 - [ ] Documentation
