@@ -90,6 +90,10 @@ blank lines) will always exist and produce false positives."
   "List of (NODE-INDEX SOURCE-NODE MIRROR-START MIRROR-END).
 Maps each source AST node to its byte range in the rendered mirror text.")
 
+(defvar-local el-prisma--region-bounds nil
+  "When non-nil, (START . END) buffer positions of the converted region.
+Nil means the entire buffer was converted.")
+
 ;;;; Format detection
 
 (defun el-prisma--detect-source-format (&optional buffer)
@@ -330,8 +334,8 @@ a proportional offset within that node."
 
 ;;;###autoload
 (defun el-prisma-convert (&optional target-format)
-  "Convert current buffer to TARGET-FORMAT in a mirror buffer.
-When called interactively, detects source format and uses the default target."
+  "Convert current buffer (or region) to TARGET-FORMAT in a mirror buffer.
+When a region is active, converts only the selected region."
   (interactive)
   (let* ((source-buf (current-buffer))
          (source-fmt (or (el-prisma--detect-source-format)
@@ -339,9 +343,13 @@ When called interactively, detects source format and uses the default target."
          (target-fmt (or target-format
                          (el-prisma--target-for-source source-fmt)
                          (error "el-prisma: no target for %s" source-fmt)))
-         (source-text (buffer-substring-no-properties (point-min) (point-max)))
+         (region-active (use-region-p))
+         (region-beg (when region-active (region-beginning)))
+         (region-end (when region-active (region-end)))
+         (source-text (if region-active
+                          (buffer-substring-no-properties region-beg region-end)
+                        (buffer-substring-no-properties (point-min) (point-max))))
          (source-ast (el-prisma-parse source-fmt source-text))
-         (rendered (el-prisma-render target-fmt source-ast))
          (mirror-name (format "*prisma:%s:%s*"
                               (buffer-name source-buf) target-fmt))
          (mirror-buf (get-buffer-create mirror-name))
@@ -369,7 +377,9 @@ When called interactively, detects source format and uses the default target."
               el-prisma--source-tick source-tick
               el-prisma--source-text source-text
               el-prisma--mirror-text rendered
-              el-prisma--render-map render-map)
+              el-prisma--render-map render-map
+              el-prisma--region-bounds
+              (when region-active (cons region-beg region-end)))
         (el-prisma-mirror-mode 1)
         (set-buffer-modified-p nil))
       (switch-to-buffer mirror-buf)
@@ -410,6 +420,7 @@ Each op is (START END REPLACEMENT). Preserves trailing newlines."
          (source-tick el-prisma--source-tick)
          (old-mirror el-prisma--mirror-text)
          (render-map el-prisma--render-map)
+         (region-bounds el-prisma--region-bounds)
          (mirror-pos (1- (point)))
          (win-offset (when (eq (window-buffer) (current-buffer))
                        (count-lines (window-start) (point))))
@@ -442,12 +453,19 @@ Each op is (START END REPLACEMENT). Preserves trailing newlines."
              (nchanged (length changed)))
         (with-current-buffer source-buf
           (let ((inhibit-read-only t))
-            (erase-buffer)
-            (insert patched)))
+            (if region-bounds
+                (progn
+                  (delete-region (car region-bounds) (cdr region-bounds))
+                  (goto-char (car region-bounds))
+                  (insert patched))
+              (erase-buffer)
+              (insert patched))))
         (let ((el-prisma--skip-kill-confirm t))
           (kill-buffer (current-buffer)))
         (switch-to-buffer source-buf)
-        (goto-char (min (1+ target-pos) (point-max)))
+        (let ((dest (+ (1+ target-pos)
+                       (if region-bounds (car region-bounds) 0))))
+          (goto-char (min dest (point-max))))
         (when win-offset (recenter win-offset))
         (message "el-prisma: committed %d change(s)" nchanged)))))
 
@@ -598,6 +616,8 @@ Provides commit/cancel bindings and tracks source buffer linkage."
            (propertize (format " [%s] "
                                (buffer-name el-prisma--source-buffer))
                        'face '(:inherit font-lock-string-face)))
+         (when el-prisma--region-bounds
+           (propertize " [region] " 'face '(:inherit warning)))
          (propertize " │ " 'face 'shadow)
          (propertize (el-prisma--key-for #'el-prisma-commit)
                      'face '(:weight bold :inherit success))

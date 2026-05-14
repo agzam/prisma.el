@@ -252,6 +252,80 @@ Returns list of (LINE-NUM ORIGINAL CHANGED) for differing lines."
           (expect (length diffs) :to-equal 1)
           (expect (caddar diffs) :to-match "CHANGED")))))
 
+  (describe "region conversion"
+    (it "converts only selected region"
+      (let* ((md "# Before\n\nKeep above.\n\n## Target\n\nEdit old here.\n\n# After\n\nKeep below.\n")
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             mirror)
+        (with-current-buffer src
+          (let ((transient-mark-mode t))
+            (goto-char (point-min))
+            (search-forward "## Target")
+            (beginning-of-line)
+            (push-mark (point) t t)
+            (search-forward "Edit old here.\n")
+            (setq mirror (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        ;; Mirror should contain only the region content
+        (with-current-buffer mirror
+          (expect (buffer-string) :to-match "Target")
+          (expect (buffer-string) :to-match "old")
+          (expect (buffer-string) :not :to-match "Before")
+          (expect (buffer-string) :not :to-match "After")
+          (expect el-prisma--region-bounds :not :to-be nil))))
+
+    (it "region edit commits back to correct location"
+      (let* ((md "# Before\n\nKeep above.\n\n## Target\n\nEdit old here.\n\n# After\n\nKeep below.\n")
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             mirror)
+        (with-current-buffer src
+          (let ((transient-mark-mode t))
+            (goto-char (point-min))
+            (search-forward "## Target")
+            (beginning-of-line)
+            (push-mark (point) t t)
+            (search-forward "Edit old here.\n")
+            (setq mirror (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "old")
+          (replace-match "NEW")
+          (let ((el-prisma--skip-kill-confirm t))
+            (el-prisma-commit)))
+        (let* ((result (with-current-buffer src (buffer-string)))
+               (diffs (el-prisma-e2e--diff-lines md result)))
+          ;; Only the edited line should differ
+          (expect (length diffs) :to-equal 1)
+          (expect result :to-match "NEW")
+          ;; Surrounding content intact
+          (expect result :to-match "# Before")
+          (expect result :to-match "Keep above")
+          (expect result :to-match "# After")
+          (expect result :to-match "Keep below"))))
+
+    (it "region cancel leaves source unchanged"
+      (let* ((md "# Before\n\nTarget text.\n\n# After\n")
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             mirror)
+        (with-current-buffer src
+          (let ((transient-mark-mode t))
+            (goto-char (point-min))
+            (search-forward "Target")
+            (beginning-of-line)
+            (push-mark (point) t t)
+            (forward-line 1)
+            (setq mirror (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-max))
+          (insert "\nExtra stuff\n")
+          (let ((el-prisma--skip-kill-confirm t))
+            (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+              (el-prisma-cancel))))
+        (with-current-buffer src
+          (expect (buffer-string) :to-equal md)))))
+
   (describe "el-prisma-convert"
     (it "creates a mirror buffer from markdown source"
       (let* ((src (el-prisma-e2e--make-md-buffer
