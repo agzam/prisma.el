@@ -272,20 +272,57 @@ Extracts text from NEW-MIRROR using line ranges (stable across edits)."
                 (push (list src-node extracted) result)))))
         (nreverse result)))))
 
+(defun el-prisma--merge-adjacent-nodes (changed-nodes)
+  "Merge adjacent CHANGED-NODES into combined operations.
+Adjacent means their source byte ranges are contiguous (allowing
+for inter-block whitespace). Returns list of (SOURCE-START SOURCE-END
+COMBINED-MIRROR-TEXT)."
+  (when changed-nodes
+    (let ((sorted (sort (copy-sequence changed-nodes)
+                        (lambda (a b)
+                          (< (el-prisma-model-start (car a))
+                             (el-prisma-model-start (car b))))))
+          (groups nil)
+          (cur-start nil)
+          (cur-end nil)
+          (cur-texts nil))
+      (dolist (entry sorted)
+        (let* ((src-node (car entry))
+               (mirror-text (cadr entry))
+               (s (el-prisma-model-start src-node))
+               (e (el-prisma-model-end src-node)))
+          (if (and cur-end
+                   ;; Adjacent if gap is small (whitespace between blocks)
+                   (< (- s cur-end) 4))
+              ;; Extend current group
+              (progn
+                (setq cur-end e)
+                (push mirror-text cur-texts))
+            ;; Start new group
+            (when cur-start
+              (push (list cur-start cur-end
+                          (mapconcat #'identity (nreverse cur-texts) "\n\n"))
+                    groups))
+            (setq cur-start s
+                  cur-end e
+                  cur-texts (list mirror-text)))))
+      (when cur-start
+        (push (list cur-start cur-end
+                    (mapconcat #'identity (nreverse cur-texts) "\n\n"))
+              groups))
+      (nreverse groups))))
+
 (defun el-prisma--build-patch-ops (changed-nodes source-fmt target-fmt)
   "Build patch operations from CHANGED-NODES.
-Each entry is (SOURCE-NODE EDITED-MIRROR-TEXT).
-Parses the edited mirror text in TARGET-FMT, renders to SOURCE-FMT.
-Returns list of (SOURCE-START SOURCE-END REPLACEMENT)."
-  (let (ops)
-    (dolist (entry changed-nodes)
-      (let* ((src-node (car entry))
-             (mirror-text (cadr entry))
-             (src-start (el-prisma-model-start src-node))
-             (src-end (el-prisma-model-end src-node))
-             ;; Parse the edited mirror snippet
+Merges adjacent changed nodes into single operations to preserve
+inter-block spacing. Returns list of (SOURCE-START SOURCE-END REPLACEMENT)."
+  (let ((merged (el-prisma--merge-adjacent-nodes changed-nodes))
+        ops)
+    (dolist (group merged)
+      (let* ((src-start (nth 0 group))
+             (src-end (nth 1 group))
+             (mirror-text (nth 2 group))
              (parsed (el-prisma-parse target-fmt mirror-text))
-             ;; Render back to source format
              (rendered (el-prisma-render source-fmt parsed)))
         (push (list src-start src-end rendered) ops)))
     (nreverse ops)))

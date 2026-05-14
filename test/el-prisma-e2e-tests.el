@@ -237,6 +237,48 @@ Returns list of (LINE-NUM ORIGINAL CHANGED) for differing lines."
         (let ((result (with-current-buffer src (buffer-string))))
           (expect result :to-equal md))))
 
+    (xit "rearranging blocks preserves blank lines"
+      (let* ((md (concat "# Title\n\n"
+                         "### Step 1\n\n"
+                         "First content.\n\n"
+                         "### Step 2\n\n"
+                         "Second content.\n\n"
+                         "### Step 3\n\n"
+                         "Third content.\n"))
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          ;; Swap step 1 and step 2 blocks
+          (goto-char (point-min))
+                      (let ((step1-start (progn (search-forward "*** Step 1") (beginning-of-line) (point)))
+                          (step2-start (progn (search-forward "*** Step 2") (beginning-of-line) (point)))
+                          (step2-end (progn (search-forward "Second content.") (end-of-line) (point))))
+            (let ((step2-text (buffer-substring step2-start step2-end)))
+              ;; Delete step 2
+              (delete-region step2-start step2-end)
+              ;; Insert before step 1
+              (goto-char step1-start)
+              (insert step2-text "\n\n")))
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let* ((result (with-current-buffer src (buffer-string)))
+               (lines (split-string result "\n")))
+          ;; Step 2 should now come before Step 1
+          (let ((s2-pos (cl-position "### Step 2" lines :test #'string=))
+                (s1-pos (cl-position "### Step 1" lines :test #'string=))
+                (s3-pos (cl-position "### Step 3" lines :test #'string=)))
+            (expect s2-pos :to-be-less-than s1-pos)
+            ;; All steps still present
+            (expect s1-pos :not :to-be nil)
+            (expect s3-pos :not :to-be nil))
+          ;; Check no consecutive blank lines were eaten -
+          ;; each heading should be preceded by a blank line
+          (expect result :to-match "\n\n### Step")
+          ;; Content preserved
+          (expect result :to-match "First content")
+          (expect result :to-match "Second content")
+          (expect result :to-match "Third content"))))
+
     (it "edit in Org source, commit back to Org"
       (let* ((org "* Title\n\nSome /italic/ and *bold*.\n\n- item\n\nTarget word.\n")
              (src (el-prisma-e2e--make-org-buffer "test.org" org))
