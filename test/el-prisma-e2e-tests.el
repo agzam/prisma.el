@@ -156,8 +156,8 @@
         (push mirror el-prisma-e2e--buffers)
         (with-current-buffer mirror
           (goto-char (point-min))
-          (search-forward "old")
-          (replace-match "new")
+          (search-forward "old word")
+          (replace-match "new word")
           (let ((el-prisma--skip-kill-confirm t)
                 (el-prisma-validate-on-commit nil))
             (el-prisma-commit)))

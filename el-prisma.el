@@ -83,6 +83,13 @@ blank lines) will always exist and produce false positives."
 (defvar-local el-prisma--source-text nil
   "Original source text at conversion time.")
 
+(defvar-local el-prisma--mirror-text nil
+  "Original rendered mirror text, for diffing on commit.")
+
+(defvar-local el-prisma--render-map nil
+  "List of (NODE-INDEX SOURCE-NODE MIRROR-START MIRROR-END).
+Maps each source AST node to its byte range in the rendered mirror text.")
+
 ;;;; Format detection
 
 (defun el-prisma--detect-source-format (&optional buffer)
@@ -137,6 +144,147 @@ FORMAT is a symbol: `org', `markdown'."
      (require 'el-prisma-md)
      (el-prisma-md-render ast))
     (_ (error "el-prisma: unsupported render format: %s" format))))
+
+;;;; Render with map
+
+(defun el-prisma-render-with-map (format ast)
+  "Render AST to FORMAT, return (RENDERED-TEXT . RENDER-MAP).
+RENDER-MAP is a list of (INDEX SOURCE-NODE MIRROR-START MIRROR-END)."
+  (let ((children (el-prisma-model-children ast))
+        (pos 0)
+        (parts nil)
+        (render-map nil)
+        (idx 0))
+    (dolist (node children)
+      (when (and parts (not (string-empty-p (car parts))))
+        ;; Add block separator if previous part doesn't already end with \n\n
+        (unless (string-suffix-p "\n\n" (car parts))
+          (push "\n\n" parts)
+          (setq pos (+ pos 2))))
+      (let* ((rendered (el-prisma-render-node format node))
+             (len (length rendered))
+             (start pos)
+             (end (+ pos len)))
+        (push (list idx node start end) render-map)
+        (push rendered parts)
+        (setq pos end)
+        (cl-incf idx)))
+    (cons (apply #'concat (nreverse parts))
+          (nreverse render-map))))
+
+(defun el-prisma-render-node (format node)
+  "Render a single NODE to FORMAT string."
+  (pcase format
+    ('org
+     (require 'el-prisma-org)
+     (el-prisma-org--render-node node))
+    ('markdown
+     (require 'el-prisma-md)
+     (el-prisma-md--render-node node))
+    (_ (error "el-prisma: unsupported render format: %s" format))))
+
+;;;; Text diff (mirror before vs after)
+
+(defun el-prisma--text-diff-changed-lines (old-text new-text)
+  "Compare OLD-TEXT and NEW-TEXT line by line.
+Returns list of 0-based line indices that differ."
+  (let ((old-lines (split-string old-text "\n"))
+        (new-lines (split-string new-text "\n"))
+        (changed nil))
+    (cl-loop for i from 0
+             for ol in old-lines
+             for nl in new-lines
+             unless (string= ol nl)
+             do (push i changed))
+    ;; Handle length differences
+    (let ((old-len (length old-lines))
+          (new-len (length new-lines)))
+      (when (/= old-len new-len)
+        (cl-loop for i from (min old-len new-len)
+                 below (max old-len new-len)
+                 do (push i changed))))
+    (nreverse changed)))
+
+(defun el-prisma--lines-to-byte-range (text line-indices)
+  "Convert LINE-INDICES (0-based) to a (START . END) byte range in TEXT.
+Returns the minimal byte range covering all listed lines."
+  (when line-indices
+    (let ((lines (split-string text "\n"))
+          (min-line (apply #'min line-indices))
+          (max-line (apply #'max line-indices))
+          (pos 0)
+          (start nil)
+          (end nil))
+      (cl-loop for i from 0
+               for line in lines
+               do (when (= i min-line) (setq start pos))
+                  (setq pos (+ pos (length line) 1))
+                  (when (= i max-line) (setq end pos)))
+      (when (and start end)
+        (cons start (min end (length text)))))))
+
+;;;; Changed node detection
+
+(defun el-prisma--byte-pos-to-line (text pos)
+  "Return the 0-based line number at byte POS in TEXT."
+  (let ((line 0))
+    (cl-loop for i from 0 below (min pos (length text))
+             when (= (aref text i) ?\n) do (cl-incf line))
+    line))
+
+(defun el-prisma--extract-lines (text start-line end-line)
+  "Extract lines START-LINE to END-LINE (inclusive, 0-based) from TEXT."
+  (let ((lines (split-string text "\n")))
+    (mapconcat #'identity
+               (cl-subseq lines start-line
+                           (min (1+ end-line) (length lines)))
+               "\n")))
+
+(defun el-prisma--find-changed-nodes (old-mirror new-mirror render-map)
+  "Find source nodes affected by changes between OLD-MIRROR and NEW-MIRROR.
+Uses RENDER-MAP to correlate mirror byte ranges to source nodes.
+Returns list of (SOURCE-NODE EDITED-MIRROR-TEXT) for affected nodes.
+Extracts text from NEW-MIRROR using line ranges (stable across edits)."
+  (let* ((changed-lines (el-prisma--text-diff-changed-lines
+                         old-mirror new-mirror))
+         (changed-range (el-prisma--lines-to-byte-range
+                         old-mirror changed-lines)))
+    (when changed-range
+      (let ((cstart (car changed-range))
+            (cend (cdr changed-range))
+            (result nil))
+        (dolist (entry render-map)
+          (let ((mstart (nth 2 entry))
+                (mend (nth 3 entry))
+                (src-node (nth 1 entry)))
+            (when (and (< mstart cend) (> mend cstart))
+              ;; Map byte range to line range (stable across edits)
+              (let* ((start-line (el-prisma--byte-pos-to-line
+                                  old-mirror mstart))
+                     (end-line (el-prisma--byte-pos-to-line
+                                old-mirror (1- mend)))
+                     (extracted (el-prisma--extract-lines
+                                 new-mirror start-line end-line)))
+                (push (list src-node extracted) result)))))
+        (nreverse result)))))
+
+(defun el-prisma--build-patch-ops (changed-nodes source-fmt target-fmt)
+  "Build patch operations from CHANGED-NODES.
+Each entry is (SOURCE-NODE EDITED-MIRROR-TEXT).
+Parses the edited mirror text in TARGET-FMT, renders to SOURCE-FMT.
+Returns list of (SOURCE-START SOURCE-END REPLACEMENT)."
+  (let (ops)
+    (dolist (entry changed-nodes)
+      (let* ((src-node (car entry))
+             (mirror-text (cadr entry))
+             (src-start (el-prisma-model-start src-node))
+             (src-end (el-prisma-model-end src-node))
+             ;; Parse the edited mirror snippet
+             (parsed (el-prisma-parse target-fmt mirror-text))
+             ;; Render back to source format
+             (rendered (el-prisma-render source-fmt parsed)))
+        (push (list src-start src-end rendered) ops)))
+    (nreverse ops)))
 
 ;;;; Cursor position mapping
 
@@ -201,11 +349,14 @@ When called interactively, detects source format and uses the default target."
     (let* ((source-pos (1- (point)))
            (win-offset (when (eq (window-buffer) (current-buffer))
                          (count-lines (window-start) (point))))
-           (mirror-ast (el-prisma-parse target-fmt rendered))
+           (render-result (el-prisma-render-with-map target-fmt source-ast))
+           (rendered (car render-result))
+           (render-map (cdr render-result))
            (target-pos (el-prisma--map-position
                         source-pos
                         (el-prisma-model-children source-ast)
-                        (el-prisma-model-children mirror-ast))))
+                        ;; Use render map for position mapping
+                        (mapcar #'cadr render-map))))
       (with-current-buffer mirror-buf
         (let ((inhibit-read-only t))
           (erase-buffer)
@@ -216,7 +367,9 @@ When called interactively, detects source format and uses the default target."
               el-prisma--source-format source-fmt
               el-prisma--target-format target-fmt
               el-prisma--source-tick source-tick
-              el-prisma--source-text source-text)
+              el-prisma--source-text source-text
+              el-prisma--mirror-text rendered
+              el-prisma--render-map render-map)
         (el-prisma-mirror-mode 1)
         (set-buffer-modified-p nil))
       (switch-to-buffer mirror-buf)
@@ -224,8 +377,28 @@ When called interactively, detects source format and uses the default target."
       (when win-offset (recenter win-offset)))
     mirror-buf))
 
+(defun el-prisma--apply-patch-ops (source-text ops)
+  "Apply patch OPS to SOURCE-TEXT in reverse position order.
+Each op is (START END REPLACEMENT). Preserves trailing newlines."
+  (let ((sorted (sort (copy-sequence ops)
+                      (lambda (a b) (> (car a) (car b))))))
+    (dolist (op sorted)
+      (let* ((start (nth 0 op))
+             (end (nth 1 op))
+             (replacement (nth 2 op))
+             (original (substring source-text start end))
+             (fixed (if (and (string-suffix-p "\n" original)
+                             (not (string-suffix-p "\n" replacement)))
+                        (concat replacement "\n")
+                      replacement)))
+        (setq source-text
+              (concat (substring source-text 0 start)
+                      fixed
+                      (substring source-text end)))))
+    source-text))
+
 (defun el-prisma-commit ()
-  "Parse mirror buffer, diff against source AST, patch source."
+  "Text-diff mirror, map changes to source nodes, patch source."
   (interactive)
   (unless el-prisma-mirror-mode
     (error "el-prisma: not in a mirror buffer"))
@@ -235,15 +408,16 @@ When called interactively, detects source format and uses the default target."
          (target-fmt el-prisma--target-format)
          (source-text el-prisma--source-text)
          (source-tick el-prisma--source-tick)
+         (old-mirror el-prisma--mirror-text)
+         (render-map el-prisma--render-map)
          (mirror-pos (1- (point)))
          (win-offset (when (eq (window-buffer) (current-buffer))
                        (count-lines (window-start) (point))))
-         (mirror-text (buffer-substring-no-properties
-                       (point-min) (point-max)))
-         (mirror-ast (el-prisma-parse target-fmt mirror-text))
+         (new-mirror (buffer-substring-no-properties
+                      (point-min) (point-max)))
          (target-pos (el-prisma--map-position
                       mirror-pos
-                      (el-prisma-model-children mirror-ast)
+                      (mapcar #'cadr render-map)
                       (el-prisma-model-children source-ast))))
     (unless (buffer-live-p source-buf)
       (error "el-prisma: source buffer no longer exists"))
@@ -252,38 +426,30 @@ When called interactively, detects source format and uses the default target."
       (unless (yes-or-no-p
                "Source buffer was modified since conversion. Commit anyway? ")
         (user-error "Commit cancelled")))
-    (require 'el-prisma-diff)
-    (let ((diff (el-prisma-diff-ast source-ast mirror-ast)))
-      (if (and (null (plist-get diff :modified))
-               (null (plist-get diff :inserted))
-               (null (plist-get diff :deleted)))
-          (progn
-            (let ((el-prisma--skip-kill-confirm t))
-              (kill-buffer (current-buffer)))
-            (switch-to-buffer source-buf)
-            (goto-char (min (1+ target-pos) (point-max)))
-            (when win-offset (recenter win-offset))
-            (message "el-prisma: no changes to commit"))
-        (when el-prisma-validate-on-commit
-          (el-prisma--validate-round-trip
-           mirror-text target-fmt source-fmt))
-        (require 'el-prisma-patch)
-        (let* ((render-fn (lambda (node)
-                            (el-prisma-render source-fmt node)))
-               (patched (el-prisma-patch source-text diff render-fn)))
-          (with-current-buffer source-buf
-            (let ((inhibit-read-only t))
-              (erase-buffer)
-              (insert patched)))
+    (if (string= old-mirror new-mirror)
+        (progn
           (let ((el-prisma--skip-kill-confirm t))
             (kill-buffer (current-buffer)))
           (switch-to-buffer source-buf)
           (goto-char (min (1+ target-pos) (point-max)))
           (when win-offset (recenter win-offset))
-          (message "el-prisma: committed %d modification(s), %d insertion(s), %d deletion(s)"
-                   (length (plist-get diff :modified))
-                   (length (plist-get diff :inserted))
-                   (length (plist-get diff :deleted))))))))
+          (message "el-prisma: no changes to commit"))
+      (let* ((changed (el-prisma--find-changed-nodes
+                       old-mirror new-mirror render-map))
+             (ops (el-prisma--build-patch-ops
+                   changed source-fmt target-fmt))
+             (patched (el-prisma--apply-patch-ops source-text ops))
+             (nchanged (length changed)))
+        (with-current-buffer source-buf
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (insert patched)))
+        (let ((el-prisma--skip-kill-confirm t))
+          (kill-buffer (current-buffer)))
+        (switch-to-buffer source-buf)
+        (goto-char (min (1+ target-pos) (point-max)))
+        (when win-offset (recenter win-offset))
+        (message "el-prisma: committed %d change(s)" nchanged)))))
 
 (defun el-prisma-cancel ()
   "Cancel conversion, kill mirror buffer without changing source."
