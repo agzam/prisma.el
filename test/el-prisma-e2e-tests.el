@@ -107,6 +107,86 @@
         (with-current-buffer src
           (expect (line-number-at-pos) :to-equal 5)))))
 
+  (describe "surgical precision"
+    ;; The critical test: a single edit must produce exactly one
+    ;; line difference in the source. No collateral damage.
+    (it "single paragraph edit changes only that paragraph"
+      (let* ((md (concat "# Title\n\n"
+                         "First paragraph.\n\n"
+                         "Second paragraph with old word.\n\n"
+                         "Third paragraph.\n"))
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "old")
+          (replace-match "new")
+          (let ((el-prisma--skip-kill-confirm t)
+                (el-prisma-validate-on-commit nil))
+            (el-prisma-commit)))
+        (let* ((result (with-current-buffer src (buffer-string)))
+               (orig-lines (split-string md "\n"))
+               (result-lines (split-string result "\n"))
+               (diff-count 0))
+          (cl-loop for a in orig-lines
+                   for b in result-lines
+                   unless (string= a b) do (cl-incf diff-count))
+          ;; Exactly one line should differ
+          (expect diff-count :to-equal 1)
+          ;; And it should contain our edit
+          (expect result :to-match "new word")
+          ;; And the other lines should be intact
+          (expect result :to-match "# Title")
+          (expect result :to-match "First paragraph")
+          (expect result :to-match "Third paragraph"))))
+
+    (it "single edit in complex document - no collateral damage"
+      (let* ((md (concat "# Heading\n\n"
+                         "Paragraph with **bold** and *italic*.\n\n"
+                         "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
+                         "> blockquote\n\n"
+                         "---\n\n"
+                         "- list item\n\n"
+                         "```python\ncode()\n```\n\n"
+                         "Edit old word here.\n\n"
+                         "[link](http://example.com)\n"))
+             (src (el-prisma-e2e--make-md-buffer "test.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "old")
+          (replace-match "new")
+          (let ((el-prisma--skip-kill-confirm t)
+                (el-prisma-validate-on-commit nil))
+            (el-prisma-commit)))
+        (let* ((result (with-current-buffer src (buffer-string)))
+               (orig-lines (split-string md "\n"))
+               (result-lines (split-string result "\n"))
+               (diff-count 0)
+               (diff-lines nil))
+          (cl-loop for a in orig-lines
+                   for b in result-lines
+                   for i from 1
+                   unless (string= a b)
+                   do (cl-incf diff-count)
+                      (push i diff-lines))
+          ;; At most 1 line should differ
+          (expect diff-count :to-be-less-than 2)
+          ;; Same line count
+          (expect (length result-lines) :to-equal (length orig-lines))
+          ;; All elements preserved
+          (expect result :to-match "# Heading")
+          (expect result :to-match "\\*\\*bold\\*\\*")
+          (expect result :to-match "| A | B |")
+          (expect result :to-match "> blockquote")
+          (expect result :to-match "---")
+          (expect result :to-match "- list item")
+          (expect result :to-match "code()")
+          (expect result :to-match "\\[link\\]")
+          (expect result :to-match "new word")))))
+
   (describe "el-prisma-convert"
     (it "creates a mirror buffer from markdown source"
       (let* ((src (el-prisma-e2e--make-md-buffer
