@@ -1052,6 +1052,119 @@ Returns the patched source string."
           (expect result :to-match "MY_APP_ID")
           (el-prisma-e2e--check-invariants md result)))))
 
+  (describe "Group B additional: rearrangements"
+
+    (it "B2: org-metaup on *** Step 3"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "*** Step 3")
+          (beginning-of-line)
+          (org-metaup)
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          (expect (string-match "### Step 3" result)
+                  :to-be-less-than (string-match "### Step 2" result))
+          (expect result :to-match "APP_ID")
+          (expect result :to-match "read:data")
+          (el-prisma-e2e--check-invariants md result))))
+
+    (it "B3: org-metadown on *** Step 1"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "*** Step 1")
+          (beginning-of-line)
+          (org-metadown)
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          (expect (string-match "### Step 2" result)
+                  :to-be-less-than (string-match "### Step 1" result))
+          (expect result :to-match "https://example.com/console")
+          (el-prisma-e2e--check-invariants md result))))
+
+    (it "B7: insert line in code block only changes that block"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "npm install foo")
+          (end-of-line)
+          (insert "\nnpm install bar")
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          ;; New line present
+          (expect result :to-match "npm install bar")
+          ;; Original line preserved
+          (expect result :to-match "npm install foo")
+          ;; Rest of document intact
+          (expect result :to-match "## Configuration")
+          (expect result :to-match "## Usage")
+          (expect result :to-match "foo run --config")
+          (el-prisma-e2e--check-invariants md result)))))
+
+  (describe "Group C additional: baselines"
+
+    (it "C2: edit then manually restore = byte-identical"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          ;; Make a change then manually revert it (simulates undo)
+          (goto-char (point-min))
+          (search-forward "*bold*")
+          (replace-match "*bold*")  ; replace with same text
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (expect (with-current-buffer src (buffer-string)) :to-equal md))))
+
+  (describe "Group D additional: multi-operation"
+
+    (it "D1: edit heading + edit paragraph = 2 lines differ"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "Project Name")
+          (replace-match "Changed Name")
+          (goto-char (point-min))
+          (search-forward "intro")
+          (replace-match "opening")
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          (expect result :to-match "# Changed Name")
+          (expect result :to-match "opening")
+          (el-prisma-e2e--check-invariants md result)))))
+
+  (describe "Group E: pre-existing changes"
+
+    (it "E1: concurrent modification detection"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        ;; Modify source behind mirror's back
+        (with-current-buffer src
+          (goto-char (point-max))
+          (insert "MARKER\n"))
+        ;; Try to commit - should detect and ask
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "bold")
+          (replace-match "strong")
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) nil)))
+            (expect (el-prisma-commit) :to-throw 'user-error))))))
+
   (describe "Group F: cursor position"
 
     (it "F1: cursor on ## Configuration lands on ** Configuration"

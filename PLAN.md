@@ -1,139 +1,73 @@
-# v1.1 Plan: Text-diff commit architecture
+# El Prisma - Architecture and Status
 
-## Problem
+## Current architecture (v1.1)
 
-The current commit flow parses the entire mirror buffer with a second parser
-(e.g., Org parser for an Org mirror), then AST-diffs the result against the
-source AST (from the MD parser). This fails because different parsers produce
-structurally different ASTs - different node counts, different boundaries,
-different handling of whitespace and tables. A single-character edit can cause
-cascading mismatches across the entire document.
+### Commit pipeline
 
-## Solution
+The commit flow has three paths based on what changed in the mirror:
 
-Compare the mirror text against itself (before vs after editing). Map changed
-regions back to source AST nodes via a render map built during initial conversion.
+1. No change: `string=` old vs new mirror -> short-circuit, kill mirror
+2. In-place edit (same line count): line-based diff -> per-node extraction -> re-parse/re-render -> patch
+3. In-place edit (different line count): line-based diff -> adjusted byte extraction (accounting for length delta) -> filter unchanged nodes -> re-parse/re-render -> patch
+4. Rearrangement (node order changed): property-based order detection -> reconstruct source from original node bytes in new order -> patch
 
-## Tasks
+### Key components
 
-### 1. Render map
+- `el-prisma-render-with-map`: renders AST to target format, produces render map (node-idx -> mirror byte range)
+- `el-prisma-node-idx` text property: tagged on mirror regions during convert, travels with text through org-metaup/down
+- `el-prisma--mirror-node-order`: reads property order from mirror buffer
+- `el-prisma--find-changed-nodes`: line-based detection for edits (handles both same and different line counts)
+- `el-prisma--build-reorder-ops`: reconstructs source in new node order using original source bytes
+- `el-prisma--apply-patch-ops`: applies ops with trailing whitespace preservation
+- Data loss safeguard: refuses to kill mirror if patch produces unchanged source
 
-Modify renderers (`el-prisma-org--render-node`, `el-prisma-md--render-node`)
-to produce a render map alongside the rendered text. The render map is a list:
+### How edits work
 
-```elisp
-((0 source-node-0 0 125)      ; node-index, source-node, mirror-start, mirror-end
- (1 source-node-1 127 340)
- ...)
-```
+1. Text-diff old vs new mirror -> changed line indices
+2. Convert to byte range (clamped to available lines)
+3. Find overlapping render map entries
+4. For same line count: extract per-node using line numbers
+5. For different line count: extract using adjusted byte positions, filter nodes whose text didn't actually change
+6. Merge adjacent changed nodes, re-parse combined mirror text, render to source format
+7. Apply patch ops to source text
 
-Each entry records which source AST node produced which byte range in the
-mirror text. The separator text between blocks (`\n\n`) belongs to the
-preceding entry's range.
+### How rearrangement works
 
-Implementation: a new function `el-prisma-render-with-map` that wraps the
-existing renderer, tracking positions as it concatenates output. The existing
-`el-prisma-render` remains unchanged for backward compatibility.
+1. Read `el-prisma-node-idx` property order from mirror buffer
+2. Compare against original order (skipping zero-length nodes)
+3. If different: for each node in new order, take its original source bytes
+4. Join with `\n\n`, create single replacement op covering full range
+5. Apply with trailing whitespace preservation
 
-Store the render map as `el-prisma--render-map` buffer-local in the mirror.
-Store the original mirror text as `el-prisma--mirror-text`.
+### Cursor position mapping
 
-### 2. Text diff
+Uses render map to build synthetic nodes with mirror byte positions. `el-prisma--map-position` finds containing node by index, computes proportional offset within the node.
 
-A function `el-prisma--text-diff-regions` that takes two strings (original
-and edited mirror text) and returns a list of changed byte ranges:
+## What's done
 
-```elisp
-((start1 . end1) (start2 . end2) ...)
-```
+- [x] Render map (task 1)
+- [x] Text diff (task 2)
+- [x] Region-to-node mapping (task 3)
+- [x] Per-node re-parse (task 4)
+- [x] Rewritten commit flow (task 5)
+- [x] Dead code removal (task 6)
+- [x] Unit tests for text-diff primitives
+- [x] E2E tests: in-place edits, rearrangements, baselines, cursor
+- [x] Cursor position fix (synthetic mirror-position nodes)
+- [x] Blank-line preservation (trailing whitespace pattern)
+- [x] Data loss safeguard
+- [x] Text-property node tracking for rearrangement
+- [x] Line-count-changing edit fix (insertion/deletion)
+- [x] Comprehensive test matrix (STRATEGY.md groups B, C, D, F)
 
-Implementation options (in order of preference):
-- Use Emacs's built-in `compare-buffer-substrings` on temp buffers
-- Line-by-line comparison with `split-string`, accumulate changed line ranges
-- Call out to `diff` command and parse output
+## Remaining work
 
-Line-by-line is simplest and sufficient. Changed lines map to byte ranges
-via cumulative line lengths.
-
-### 3. Region-to-node mapping
-
-A function `el-prisma--changed-nodes` that takes changed mirror byte ranges
-and the render map, returns the list of affected source AST nodes (with their
-source byte ranges and the corresponding edited mirror text).
-
-For each changed byte range, find all render map entries that overlap with it.
-Those are the affected source nodes. Extract the corresponding region from
-the edited mirror text for each.
-
-### 4. Per-node re-parse and render
-
-For each affected source node:
-1. Extract the edited mirror text for that node's region
-2. Parse it in the target format (e.g., parse the Org snippet)
-3. Render the result to the source format (e.g., render to Markdown)
-4. This is the replacement text for the source byte range
-
-This only parses small regions, not the full document.
-
-### 5. Rewrite commit flow
-
-Replace the current `el-prisma-commit`:
-
-```
-Current:  parse entire mirror -> AST diff -> patch
-New:      text diff mirror -> find changed nodes -> per-node re-parse -> patch
-```
-
-The patch engine's `el-prisma-patch--apply-ops` remains the same.
-
-### 6. Remove dead code
-
-- Remove `el-prisma-diff-ast` from the commit path (keep for potential future use)
-- Remove `el-prisma--validate-round-trip` (no longer needed)
-- Remove `el-prisma-validate-on-commit` defcustom
-
-### 7. Update tests
-
-- Add render map tests: verify map positions match actual rendered text
-- Add text diff tests: verify changed regions detected correctly
-- Add region-to-node mapping tests
-- Update all E2E tests to use the new commit flow
-- Add E2E test with the real problematic file (paths with `/`, tables, etc.)
-- Keep existing parser/renderer unit tests unchanged
-
-### 8. Edge cases to handle
-
-- User adds new content between existing blocks: the added region falls
-  between two render map entries. Treat as an insertion after the preceding
-  source node.
-- User deletes an entire block: the render map entry's region is now empty
-  in the edited text. Treat as deletion of that source node.
-- User edits across block boundaries (merges two paragraphs, splits one):
-  multiple render map entries affected. Re-parse the combined region as
-  a single chunk and produce replacement for all affected source byte ranges.
-- Empty edits (no changes): short-circuit, no patching.
-
-## Execution order
-
-1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 6
-
-Build the new pipeline first (1-5), verify with tests (7), then clean up (6).
-Each step is independently testable.
-
-## Fixed: blank lines lost during block rearrangement
-
-Fixed in 647a07d. Root cause was `el-prisma--apply-patch-ops` only
-preserving a single trailing `\n` from the original source range.
-The fix preserves the full trailing newline pattern (`\n\n` for blank
-line separators).
-
-## Fixed: cursor position displaced after convert
-
-Fixed in 647a07d. `el-prisma--map-position` was receiving source AST
-nodes (source byte positions) as target children instead of nodes with
-mirror byte positions. Now builds synthetic nodes from the render map.
+- [ ] Complete test matrix from STRATEGY.md (groups A, B2/B3/B6, C2, D1/D2/D4/D5, E1/E2, F2/F4)
+- [ ] Add insertion/deletion E2E test (emoji in code block scenario)
+- [ ] Rearrangement cosmetic: ~6 extra blank lines from `\n\n` joining (functional, not correctness issue)
+- [ ] JSON/EDN conversion (phase 2)
 
 ## Not in scope
 
-- JSON/EDN conversion (phase 2, unchanged)
+- JSON/EDN conversion (phase 2)
 - Org parser improvements beyond what's needed for per-node re-parse
