@@ -202,14 +202,16 @@ Returns list of 0-based line indices that differ."
 
 (defun el-prisma--lines-to-byte-range (text line-indices)
   "Convert LINE-INDICES (0-based) to a (START . END) byte range in TEXT.
-Returns the minimal byte range covering all listed lines."
+Returns the minimal byte range covering all listed lines.
+Clamps max-line to available lines in TEXT."
   (when line-indices
-    (let ((lines (split-string text "\n"))
-          (min-line (apply #'min line-indices))
-          (max-line (apply #'max line-indices))
-          (pos 0)
-          (start nil)
-          (end nil))
+    (let* ((lines (split-string text "\n"))
+           (min-line (apply #'min line-indices))
+           (max-line (min (apply #'max line-indices)
+                          (1- (length lines))))
+           (pos 0)
+           (start nil)
+           (end nil))
       (cl-loop for i from 0
                for line in lines
                do (when (= i min-line) (setq start pos))
