@@ -1,4 +1,4 @@
-;;; el-prisma-fixture-tests.el --- Data-driven fixture tests -*- lexical-binding: t; no-byte-compile: t; -*-
+;;; prisma-fixture-tests.el --- Data-driven fixture tests -*- lexical-binding: t; no-byte-compile: t; -*-
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
@@ -10,14 +10,14 @@
 ;;; Code:
 
 (require 'buttercup)
-(require 'el-prisma)
-(require 'el-prisma-model)
-(require 'el-prisma-md)
-(require 'el-prisma-org)
+(require 'prisma)
+(require 'prisma-model)
+(require 'prisma-md)
+(require 'prisma-org)
 
 ;;;; Test runner
 
-(defun el-prisma-fixture--run (source-mode source-text edits expected-text)
+(defun prisma-fixture--run (source-mode source-text edits expected-text)
   "Run a single fixture test case.
 SOURCE-MODE: major mode function for the source buffer.
 SOURCE-TEXT: initial source content.
@@ -33,7 +33,7 @@ Returns the actual source text after commit."
             (funcall source-mode)
             (goto-char (point-min)))
           (let ((mirror-buf (with-current-buffer source-buf
-                              (el-prisma-convert))))
+                              (prisma-convert))))
             (with-current-buffer mirror-buf
               ;; Apply edits via search/replace (preserves text properties)
               (when edits
@@ -43,7 +43,7 @@ Returns the actual source text after commit."
                     (error "Fixture edit: could not find %S in mirror"
                            (car edit)))
                   (replace-match (cdr edit) t t)))
-              (el-prisma-commit))
+              (prisma-commit))
             (setq result (with-current-buffer source-buf
                            (buffer-substring-no-properties
                             (point-min) (point-max))))))
@@ -52,11 +52,11 @@ Returns the actual source text after commit."
       (dolist (buf (buffer-list))
         (when (string-prefix-p "*prisma:" (buffer-name buf))
           (let ((kill-buffer-query-functions nil)
-                (el-prisma--skip-kill-confirm t))
+                (prisma--skip-kill-confirm t))
             (kill-buffer buf)))))
     result))
 
-(defun el-prisma-fixture--run-baseline (source-mode source-text)
+(defun prisma-fixture--run-baseline (source-mode source-text)
   "Run a baseline test: convert + immediate commit = byte-identical source."
   (let ((source-buf (generate-new-buffer " *fixture-src*"))
         (result nil))
@@ -67,9 +67,9 @@ Returns the actual source text after commit."
             (funcall source-mode)
             (goto-char (point-min)))
           (let ((mirror-buf (with-current-buffer source-buf
-                              (el-prisma-convert))))
+                              (prisma-convert))))
             (with-current-buffer mirror-buf
-              (el-prisma-commit)))
+              (prisma-commit)))
           (setq result (with-current-buffer source-buf
                          (buffer-substring-no-properties
                           (point-min) (point-max)))))
@@ -78,13 +78,13 @@ Returns the actual source text after commit."
       (dolist (buf (buffer-list))
         (when (string-prefix-p "*prisma:" (buffer-name buf))
           (let ((kill-buffer-query-functions nil)
-                (el-prisma--skip-kill-confirm t))
+                (prisma--skip-kill-confirm t))
             (kill-buffer buf)))))
     result))
 
 ;;;; MD -> Org -> MD fixtures
 
-(defvar el-prisma-fixture--md-to-org
+(defvar prisma-fixture--md-to-org
   '(;; ══════════════════════════════════════════════════════════════
     ;; BASELINES: convert + commit with no edits = byte-identical
     ;; ══════════════════════════════════════════════════════════════
@@ -274,7 +274,7 @@ When :expected is nil, expects byte-identical to :source after commit.")
 
 ;;;; Org -> MD -> Org fixtures
 
-(defvar el-prisma-fixture--org-to-md
+(defvar prisma-fixture--org-to-md
   '(;; ══════════════════════════════════════════════════════════════
     ;; BASELINES
     ;; ══════════════════════════════════════════════════════════════
@@ -389,7 +389,7 @@ When :expected is nil, expects byte-identical to :source after commit.")
 
 ;;;; Rearrangement fixtures (require text property preservation)
 
-(defvar el-prisma-fixture--rearrangements
+(defvar prisma-fixture--rearrangements
   '((:name "B1: metaup step 2 before step 1"
      :source "# Guide\n\n## Steps\n\n### Step 1\n\nDo first thing\n\n### Step 2\n\nDo second thing"
      :target-line "*** Step 2"
@@ -451,7 +451,7 @@ When :expected is nil, expects byte-identical to :source after commit.")
 
   "Rearrangement test cases requiring org-metaup/metadown.")
 
-(defun el-prisma-fixture--run-rearrangement (case)
+(defun prisma-fixture--run-rearrangement (case)
   "Run a rearrangement fixture CASE."
   (let* ((source-text (plist-get case :source))
          (target-line (plist-get case :target-line))
@@ -465,7 +465,7 @@ When :expected is nil, expects byte-identical to :source after commit.")
             (markdown-mode)
             (goto-char (point-min)))
           (let ((mirror-buf (with-current-buffer source-buf
-                              (el-prisma-convert))))
+                              (prisma-convert))))
             (with-current-buffer mirror-buf
               ;; Navigate to target line
               (goto-char (point-min))
@@ -477,7 +477,7 @@ When :expected is nil, expects byte-identical to :source after commit.")
                 ('metaup (org-metaup))
                 ('metadown (org-metadown)))
               ;; Commit
-              (el-prisma-commit)))
+              (prisma-commit)))
           (setq result (with-current-buffer source-buf
                          (buffer-substring-no-properties
                           (point-min) (point-max)))))
@@ -486,7 +486,7 @@ When :expected is nil, expects byte-identical to :source after commit.")
       (dolist (buf (buffer-list))
         (when (string-prefix-p "*prisma:" (buffer-name buf))
           (let ((kill-buffer-query-functions nil)
-                (el-prisma--skip-kill-confirm t))
+                (prisma--skip-kill-confirm t))
             (kill-buffer buf)))))
     result))
 
@@ -494,40 +494,40 @@ When :expected is nil, expects byte-identical to :source after commit.")
 
 (describe "Fixtures: MD -> Org -> MD"
 
-  (dolist (case el-prisma-fixture--md-to-org)
+  (dolist (case prisma-fixture--md-to-org)
     (let ((name (plist-get case :name))
           (source (plist-get case :source))
           (edits (plist-get case :edits))
           (expected (plist-get case :expected)))
       (it name
         (if edits
-            (expect (el-prisma-fixture--run #'markdown-mode source edits expected)
+            (expect (prisma-fixture--run #'markdown-mode source edits expected)
                     :to-equal expected)
           ;; Baseline: expect byte-identical round-trip
-          (expect (el-prisma-fixture--run-baseline #'markdown-mode source)
+          (expect (prisma-fixture--run-baseline #'markdown-mode source)
                   :to-equal source))))))
 
 (describe "Fixtures: Org -> MD -> Org"
 
-  (dolist (case el-prisma-fixture--org-to-md)
+  (dolist (case prisma-fixture--org-to-md)
     (let ((name (plist-get case :name))
           (source (plist-get case :source))
           (edits (plist-get case :edits))
           (expected (plist-get case :expected)))
       (it name
         (if edits
-            (expect (el-prisma-fixture--run #'org-mode source edits expected)
+            (expect (prisma-fixture--run #'org-mode source edits expected)
                     :to-equal expected)
-          (expect (el-prisma-fixture--run-baseline #'org-mode source)
+          (expect (prisma-fixture--run-baseline #'org-mode source)
                   :to-equal source))))))
 
 (describe "Fixtures: Rearrangements"
 
-  (dolist (case el-prisma-fixture--rearrangements)
+  (dolist (case prisma-fixture--rearrangements)
     (let ((name (plist-get case :name))
           (verify-fn (plist-get case :verify)))
       (it name
-        (let ((result (el-prisma-fixture--run-rearrangement case)))
+        (let ((result (prisma-fixture--run-rearrangement case)))
           (expect (funcall verify-fn result) :to-be-truthy))))))
 
 ;;;; Edge case tests (programmatic)
@@ -539,8 +539,8 @@ When :expected is nil, expects byte-identical to :source after commit.")
     ;; detects mirror changes but patch produces no source diff.
     ;; Hard to trigger artificially since our pipeline now correctly
     ;; propagates all changes. Verify the safeguard code path exists.
-    (expect (symbol-function 'el-prisma-commit) :to-be-truthy)
-    (let ((source (symbol-function 'el-prisma-commit)))
+    (expect (symbol-function 'prisma-commit) :to-be-truthy)
+    (let ((source (symbol-function 'prisma-commit)))
       ;; Verify the safeguard string is in the compiled function
       (expect (format "%s" source) :to-match "patch produced")))
 
@@ -553,9 +553,9 @@ When :expected is nil, expects byte-identical to :source after commit.")
               (markdown-mode)
               (goto-char (point-min)))
             (let ((mirror-buf (with-current-buffer source-buf
-                                (el-prisma-convert))))
+                                (prisma-convert))))
               (with-current-buffer mirror-buf
-                (el-prisma-commit))
+                (prisma-commit))
               (expect (with-current-buffer source-buf
                         (buffer-substring-no-properties
                          (point-min) (point-max)))
@@ -565,7 +565,7 @@ When :expected is nil, expects byte-identical to :source after commit.")
         (dolist (buf (buffer-list))
           (when (string-prefix-p "*prisma:" (buffer-name buf))
             (let ((kill-buffer-query-functions nil)
-                  (el-prisma--skip-kill-confirm t))
+                  (prisma--skip-kill-confirm t))
               (kill-buffer buf)))))))
 
   (it "region conversion: edits only affect region"
@@ -584,12 +584,12 @@ When :expected is nil, expects byte-identical to :source after commit.")
               (end-of-line)
               (activate-mark))
             (let ((mirror-buf (with-current-buffer source-buf
-                                (el-prisma-convert))))
+                                (prisma-convert))))
               (with-current-buffer mirror-buf
                 (goto-char (point-min))
                 (search-forward "Old text")
                 (replace-match "New text" t t)
-                (el-prisma-commit)))
+                (prisma-commit)))
             (let ((result (with-current-buffer source-buf
                             (buffer-substring-no-properties
                              (point-min) (point-max)))))
@@ -601,7 +601,7 @@ When :expected is nil, expects byte-identical to :source after commit.")
         (dolist (buf (buffer-list))
           (when (string-prefix-p "*prisma:" (buffer-name buf))
             (let ((kill-buffer-query-functions nil)
-                  (el-prisma--skip-kill-confirm t))
+                  (prisma--skip-kill-confirm t))
               (kill-buffer buf))))))))
 
-;;; el-prisma-fixture-tests.el ends here
+;;; prisma-fixture-tests.el ends here

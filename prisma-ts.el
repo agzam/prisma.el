@@ -1,4 +1,4 @@
-;;; el-prisma-ts.el --- Tree-sitter parser integration -*- lexical-binding: t; -*-
+;;; prisma-ts.el --- Tree-sitter parser integration -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2026 Ag Ibragimov
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -13,7 +13,7 @@
 (require 'treesit)
 (require 'cl-lib)
 
-(defun el-prisma-ts-nodes-in-range (root start end)
+(defun prisma-ts-nodes-in-range (root start end)
   "Find named children of ROOT within byte range [START, END)."
   (let (result)
     (dolist (child (treesit-node-children root t))
@@ -22,28 +22,28 @@
         (push child result)))
     (nreverse result)))
 
-(defun el-prisma-ts-child-by-type (node type)
+(defun prisma-ts-child-by-type (node type)
   "Find first named child of NODE with TYPE string."
   (cl-loop for child in (treesit-node-children node t)
            when (string= (treesit-node-type child) type)
            return child))
 
-(defun el-prisma-ts-children-by-type (node type)
+(defun prisma-ts-children-by-type (node type)
   "Find all children of NODE with TYPE string (named and anonymous)."
   (cl-loop for child in (treesit-node-children node)
            when (string= (treesit-node-type child) type)
            collect child))
 
-(defun el-prisma-ts-content-range (node delimiter-type)
+(defun prisma-ts-content-range (node delimiter-type)
   "Return (CONTENT-START . CONTENT-END) for NODE.
 Finds delimiter children of DELIMITER-TYPE and returns the range
 between the opening and closing delimiter groups."
-  (let* ((delims (el-prisma-ts-children-by-type node delimiter-type))
+  (let* ((delims (prisma-ts-children-by-type node delimiter-type))
          (count (length delims))
          (mid (/ count 2)))
     (when (>= count 2)
       (cons (treesit-node-end (nth (1- mid) delims))
             (treesit-node-start (nth mid delims))))))
 
-(provide 'el-prisma-ts)
-;;; el-prisma-ts.el ends here
+(provide 'prisma-ts)
+;;; prisma-ts.el ends here

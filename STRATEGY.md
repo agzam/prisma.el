@@ -10,7 +10,7 @@ A single edit to the mirror buffer must produce exactly one change in the source
 
 For any edit, count lines that differ between source and result. For N edits, exactly N lines (or the lines within N blocks) should differ. Line count must be preserved for in-place edits.
 
-Helper: `el-prisma-iso--count-line-diffs` counts lines that differ, including length mismatch.
+Helper: `prisma-iso--count-line-diffs` counts lines that differ, including length mismatch.
 
 ### Layer 2: Byte-level isolation
 
@@ -22,13 +22,13 @@ For unchanged regions, verify byte-identical content:
 
 Split source and result by `\n\n`, compare block-by-block. For N edits, exactly N blocks should differ.
 
-Helper: `el-prisma-iso--count-block-changes`, `el-prisma-iso--changed-block-indices`.
+Helper: `prisma-iso--count-block-changes`, `prisma-iso--changed-block-indices`.
 
 ### Layer 4: Whitespace preservation
 
 Test with sources that have non-standard inter-block whitespace (triple newlines, quadruple newlines). Verify that ALL original whitespace patterns are preserved after commit.
 
-Test fixture: `el-prisma-iso--md-varied-ws` has 2, 3, and 4 newlines between blocks.
+Test fixture: `prisma-iso--md-varied-ws` has 2, 3, and 4 newlines between blocks.
 
 ## Test matrix
 

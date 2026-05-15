@@ -1,4 +1,4 @@
-# El Prisma - Specification
+# Prisma - Specification
 
 ## Vision
 
@@ -32,7 +32,7 @@ Future candidates: YAML, TOML, HTML - not in scope for v1.
 Pandoc's org<->gfm conversion is lossy and opinionated. It normalizes formatting,
 drops metadata, and uses an intermediate AST that doesn't preserve source
 positions. Round-tripping through Pandoc produces visibly different output even
-when no edits were made. El Prisma exists because Pandoc can't solve the
+when no edits were made. Prisma exists because Pandoc can't solve the
 lossless round-trip problem.
 
 ### Why PEG for Org inline (not tree-sitter)
@@ -366,7 +366,7 @@ region are preserved if the replacement doesn't include one.
 
 ### Convert flow
 
-1. User invokes `el-prisma-convert` in source buffer
+1. User invokes `prisma-convert` in source buffer
 2. Detect source format (from major mode or explicit argument)
 3. Look up target format from conversion map
 4. Parse source -> AST
@@ -374,18 +374,18 @@ region are preserved if the replacement doesn't include one.
 6. Create mirror buffer named `*prisma:<source-name>:<target-format>*`
 7. Insert rendered text, set appropriate major mode
 8. Store as buffer-local in mirror:
-   - `el-prisma--source-buffer`: reference to source buffer
-   - `el-prisma--source-ast`: AST
-   - `el-prisma--source-format`: source format symbol
-   - `el-prisma--target-format`: target format symbol
-   - `el-prisma--mirror-text`: original rendered mirror text (for diffing on commit)
-   - `el-prisma--render-map`: list of (node-index mirror-start mirror-end)
-9. Enable `el-prisma-mirror-mode` (minor mode with commit/cancel bindings)
+   - `prisma--source-buffer`: reference to source buffer
+   - `prisma--source-ast`: AST
+   - `prisma--source-format`: source format symbol
+   - `prisma--target-format`: target format symbol
+   - `prisma--mirror-text`: original rendered mirror text (for diffing on commit)
+   - `prisma--render-map`: list of (node-index mirror-start mirror-end)
+9. Enable `prisma-mirror-mode` (minor mode with commit/cancel bindings)
 10. Switch to mirror buffer in same window, preserve scroll position
 
 ### Commit flow
 
-1. User invokes `el-prisma-commit` in mirror buffer
+1. User invokes `prisma-commit` in mirror buffer
 2. Text-diff stored original mirror text vs current mirror content
 3. If no changes: message "No changes", done
 4. Map changed mirror regions to source AST nodes via render map
@@ -396,7 +396,7 @@ region are preserved if the replacement doesn't include one.
 
 ### Cancel flow
 
-1. User invokes `el-prisma-cancel` in mirror buffer
+1. User invokes `prisma-cancel` in mirror buffer
 2. If mirror buffer is modified, ask for confirmation
 3. Kill mirror buffer, no changes to source
 
@@ -423,32 +423,32 @@ disagreements to validate against.
 
 | Command              | Context       | Description                            |
 |----------------------|---------------|----------------------------------------|
-| `el-prisma-convert`  | source buffer | Open mirror buffer in target format    |
-| `el-prisma-commit`   | mirror buffer | Convert back and patch source          |
-| `el-prisma-cancel`   | mirror buffer | Discard mirror, no changes to source   |
-| `el-prisma-diff`     | mirror buffer | Preview what would change in source    |
+| `prisma-convert`  | source buffer | Open mirror buffer in target format    |
+| `prisma-commit`   | mirror buffer | Convert back and patch source          |
+| `prisma-cancel`   | mirror buffer | Discard mirror, no changes to source   |
+| `prisma-diff`     | mirror buffer | Preview what would change in source    |
 
 ## Public API
 
 ```elisp
 ;; Parse text in a given format, return intermediary AST
-(el-prisma-parse FORMAT TEXT &optional START)
+(prisma-parse FORMAT TEXT &optional START)
 
 ;; Render AST to target format, return string
-(el-prisma-render FORMAT AST)
+(prisma-render FORMAT AST)
 
 ;; Diff two ASTs, return diff structure
-(el-prisma-diff-ast AST-1 AST-2)
+(prisma-diff-ast AST-1 AST-2)
 
 ;; Apply a diff to source text, return patched string
-(el-prisma-patch SOURCE-TEXT DIFF RENDER-FN)
+(prisma-patch SOURCE-TEXT DIFF RENDER-FN)
 ```
 
 ## Customization
 
 ```elisp
 ;; Alist of (source-format . default-target-format)
-(defcustom el-prisma-default-targets
+(defcustom prisma-default-targets
   '((markdown-mode . org)
     (gfm-mode . org))
   ...)
@@ -458,7 +458,7 @@ disagreements to validate against.
 
 ## Mirror Mode
 
-`el-prisma-mirror-mode` is a minor mode activated in mirror buffers.
+`prisma-mirror-mode` is a minor mode activated in mirror buffers.
 
 Provides:
 - Keymap with commit/cancel/diff bindings
@@ -492,7 +492,7 @@ Passthrough text round-trips verbatim by definition.
 
 ### Emphasis ambiguity
 
-Markdown and Org have different emphasis boundary rules. El Prisma's hand-written
+Markdown and Org have different emphasis boundary rules. Prisma's hand-written
 Org inline parser follows Org emphasis rules (pre/post-conditions on delimiters).
 Some edge cases at emphasis boundaries may not round-trip perfectly - this is
 acceptable as the common cases work correctly.
@@ -556,24 +556,24 @@ Detected via source buffer's `buffer-modified-tick` stored at convert time.
 
 ```
 prisma.el/
-  el-prisma.el           ; main entry point, buffer manager, commands
-  el-prisma-model.el     ; intermediary AST types and constructors
-  el-prisma-peg.el       ; PEG parser engine
-  el-prisma-ts.el        ; tree-sitter parser integration
-  el-prisma-diff.el      ; AST diff algorithm
-  el-prisma-patch.el     ; patch engine
-  el-prisma-md.el        ; Markdown parser + renderer
-  el-prisma-org.el       ; Org parser + renderer
-  el-prisma-json.el      ; JSON parser + renderer
-  el-prisma-edn.el       ; EDN parser + renderer
+  prisma.el           ; main entry point, buffer manager, commands
+  prisma-model.el     ; intermediary AST types and constructors
+  prisma-peg.el       ; PEG parser engine
+  prisma-ts.el        ; tree-sitter parser integration
+  prisma-diff.el      ; AST diff algorithm
+  prisma-patch.el     ; patch engine
+  prisma-md.el        ; Markdown parser + renderer
+  prisma-org.el       ; Org parser + renderer
+  prisma-json.el      ; JSON parser + renderer
+  prisma-edn.el       ; EDN parser + renderer
   test/
-    el-prisma-tests.el         ; unit tests
-    el-prisma-peg-tests.el     ; PEG engine tests
-    el-prisma-md-tests.el      ; Markdown round-trip tests
-    el-prisma-org-tests.el     ; Org round-trip tests
-    el-prisma-json-tests.el    ; JSON/EDN round-trip tests
-    el-prisma-diff-tests.el    ; diff algorithm tests
-    el-prisma-patch-tests.el   ; patch engine tests
+    prisma-tests.el         ; unit tests
+    prisma-peg-tests.el     ; PEG engine tests
+    prisma-md-tests.el      ; Markdown round-trip tests
+    prisma-org-tests.el     ; Org round-trip tests
+    prisma-json-tests.el    ; JSON/EDN round-trip tests
+    prisma-diff-tests.el    ; diff algorithm tests
+    prisma-patch-tests.el   ; patch engine tests
 ```
 
 ---
@@ -602,7 +602,7 @@ prisma.el/
 
 ### Phase 4: Buffer Management
 - [x] Mirror buffer creation and lifecycle
-- [x] el-prisma-mirror-mode
+- [x] prisma-mirror-mode
 - [x] Commit flow with patch engine
 - [x] Cancel flow
 - [x] Region conversion support

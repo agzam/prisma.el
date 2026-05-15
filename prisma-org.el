@@ -1,4 +1,4 @@
-;;; el-prisma-org.el --- Org parser and renderer -*- lexical-binding: t; -*-
+;;; prisma-org.el --- Org parser and renderer -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2026 Ag Ibragimov
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -11,11 +11,11 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'el-prisma-model)
+(require 'prisma-model)
 
 ;;;; Inline parser
 
-(defun el-prisma-org--parse-inlines (text start)
+(defun prisma-org--parse-inlines (text start)
   "Parse inline Org content from TEXT starting at byte offset START.
 Returns list of model nodes."
   (let ((pos 0)
@@ -26,12 +26,12 @@ Returns list of model nodes."
         (cond
          ;; Bold: *...*
          ((and (= ch ?*)
-               (el-prisma-org--delimited-span text pos ?* len))
-          (let* ((span (el-prisma-org--delimited-span text pos ?* len))
+               (prisma-org--delimited-span text pos ?* len))
+          (let* ((span (prisma-org--delimited-span text pos ?* len))
                  (inner (substring text (1+ pos) (1- (cdr span))))
-                 (children (el-prisma-org--parse-inlines
+                 (children (prisma-org--parse-inlines
                             inner (+ start pos 1))))
-            (push (el-prisma-model-strong
+            (push (prisma-model-strong
                    :children children
                    :start (+ start pos)
                    :end (+ start (cdr span))
@@ -40,12 +40,12 @@ Returns list of model nodes."
             (setq pos (cdr span))))
          ;; Italic: /.../
          ((and (= ch ?/)
-               (el-prisma-org--delimited-span text pos ?/ len))
-          (let* ((span (el-prisma-org--delimited-span text pos ?/ len))
+               (prisma-org--delimited-span text pos ?/ len))
+          (let* ((span (prisma-org--delimited-span text pos ?/ len))
                  (inner (substring text (1+ pos) (1- (cdr span))))
-                 (children (el-prisma-org--parse-inlines
+                 (children (prisma-org--parse-inlines
                             inner (+ start pos 1))))
-            (push (el-prisma-model-emphasis
+            (push (prisma-model-emphasis
                    :children children
                    :start (+ start pos)
                    :end (+ start (cdr span))
@@ -54,10 +54,10 @@ Returns list of model nodes."
             (setq pos (cdr span))))
          ;; Code: ~...~
          ((and (= ch ?~)
-               (el-prisma-org--delimited-span text pos ?~ len))
-          (let* ((span (el-prisma-org--delimited-span text pos ?~ len))
+               (prisma-org--delimited-span text pos ?~ len))
+          (let* ((span (prisma-org--delimited-span text pos ?~ len))
                  (value (substring text (1+ pos) (1- (cdr span)))))
-            (push (el-prisma-model-code
+            (push (prisma-model-code
                    :value value
                    :start (+ start pos)
                    :end (+ start (cdr span))
@@ -66,10 +66,10 @@ Returns list of model nodes."
             (setq pos (cdr span))))
          ;; Verbatim: =...=
          ((and (= ch ?=)
-               (el-prisma-org--delimited-span text pos ?= len))
-          (let* ((span (el-prisma-org--delimited-span text pos ?= len))
+               (prisma-org--delimited-span text pos ?= len))
+          (let* ((span (prisma-org--delimited-span text pos ?= len))
                  (value (substring text (1+ pos) (1- (cdr span)))))
-            (push (el-prisma-model-verbatim
+            (push (prisma-model-verbatim
                    :value value
                    :start (+ start pos)
                    :end (+ start (cdr span))
@@ -78,12 +78,12 @@ Returns list of model nodes."
             (setq pos (cdr span))))
          ;; Strikethrough: +...+
          ((and (= ch ?+)
-               (el-prisma-org--delimited-span text pos ?+ len))
-          (let* ((span (el-prisma-org--delimited-span text pos ?+ len))
+               (prisma-org--delimited-span text pos ?+ len))
+          (let* ((span (prisma-org--delimited-span text pos ?+ len))
                  (inner (substring text (1+ pos) (1- (cdr span))))
-                 (children (el-prisma-org--parse-inlines
+                 (children (prisma-org--parse-inlines
                             inner (+ start pos 1))))
-            (push (el-prisma-model-strike
+            (push (prisma-model-strike
                    :children children
                    :start (+ start pos)
                    :end (+ start (cdr span))
@@ -94,13 +94,13 @@ Returns list of model nodes."
          ((and (= ch ?\[)
                (< (1+ pos) len)
                (= (aref text (1+ pos)) ?\[))
-          (if-let* ((link (el-prisma-org--parse-bracket-link
+          (if-let* ((link (prisma-org--parse-bracket-link
                            text pos len start)))
               (progn
                 (push (car link) nodes)
                 (setq pos (cdr link)))
             ;; Not a valid link, treat as text
-            (push (el-prisma-model-text
+            (push (prisma-model-text
                    :value (char-to-string ch)
                    :start (+ start pos)
                    :end (+ start pos 1)
@@ -118,16 +118,16 @@ Returns list of model nodes."
                         (not (memq (aref text pos)
                                    '(?* ?/ ?~ ?= ?+ ?\[))))
               (setq pos (1+ pos)))
-            (push (el-prisma-model-text
+            (push (prisma-model-text
                    :value (substring text text-start pos)
                    :start (+ start text-start)
                    :end (+ start pos)
                    :source-format 'org)
                   nodes))))))
     ;; Merge adjacent text nodes
-    (el-prisma-org--merge-text-nodes (nreverse nodes))))
+    (prisma-org--merge-text-nodes (nreverse nodes))))
 
-(defun el-prisma-org--delimited-span (text pos delimiter len)
+(defun prisma-org--delimited-span (text pos delimiter len)
   "Find span delimited by DELIMITER char starting at POS in TEXT.
 Returns (POS . END) where END is one past closing delimiter, or nil.
 Follows Org emphasis rules: opening delimiter must be preceded by
@@ -162,7 +162,7 @@ whitespace/EOL/punctuation. Content must not start or end with space."
       (when found
         (cons pos found)))))
 
-(defun el-prisma-org--parse-bracket-link (text pos len start)
+(defun prisma-org--parse-bracket-link (text pos len start)
   "Parse Org bracket link at POS in TEXT.
 Returns (node . end-pos) or nil."
   ;; Expect [[ at pos
@@ -181,12 +181,12 @@ Returns (node . end-pos) or nil."
                (desc-start (+ desc-sep 2))
                (desc (substring rest desc-start close))
                (end-pos (+ target-start close 2))
-               (children (list (el-prisma-model-text
+               (children (list (prisma-model-text
                                 :value desc
                                 :start (+ start target-start desc-start)
                                 :end (+ start target-start close)
                                 :source-format 'org))))
-          (cons (el-prisma-model-link
+          (cons (prisma-model-link
                  :url target
                  :children children
                  :start (+ start pos)
@@ -197,7 +197,7 @@ Returns (node . end-pos) or nil."
        (close
         (let* ((target (substring rest 0 close))
                (end-pos (+ target-start close 2)))
-          (cons (el-prisma-model-link
+          (cons (prisma-model-link
                  :url target
                  :children nil
                  :start (+ start pos)
@@ -205,43 +205,43 @@ Returns (node . end-pos) or nil."
                  :source-format 'org)
                 end-pos)))))))
 
-(defun el-prisma-org--merge-text-nodes (nodes)
+(defun prisma-org--merge-text-nodes (nodes)
   "Merge consecutive text nodes in NODES."
   (let (result)
     (dolist (node nodes)
       (if (and result
-               (eq (el-prisma-model-type (car result)) 'text)
-               (eq (el-prisma-model-type node) 'text))
+               (eq (prisma-model-type (car result)) 'text)
+               (eq (prisma-model-type node) 'text))
           (let* ((prev (pop result))
-                 (merged (el-prisma-model-text
-                          :value (concat (el-prisma-model-prop prev :value)
-                                         (el-prisma-model-prop node :value))
-                          :start (el-prisma-model-start prev)
-                          :end (el-prisma-model-end node)
-                          :source-format (el-prisma-model-source-format prev))))
+                 (merged (prisma-model-text
+                          :value (concat (prisma-model-prop prev :value)
+                                         (prisma-model-prop node :value))
+                          :start (prisma-model-start prev)
+                          :end (prisma-model-end node)
+                          :source-format (prisma-model-source-format prev))))
             (push merged result))
         (push node result)))
     (nreverse result)))
 
 ;;;; Block-level parser
 
-(defun el-prisma-org-parse (text)
+(defun prisma-org-parse (text)
   "Parse Org TEXT and return an intermediary model AST."
   (let* ((lines (split-string text "\n"))
-         (blocks (el-prisma-org--parse-blocks lines 0))
+         (blocks (prisma-org--parse-blocks lines 0))
          (len (length text)))
     ;; Clamp children end positions - the line-based parser may
     ;; overshoot by 1 on the last block (counting a \n that isn't there)
     (dolist (block blocks)
-      (when (and (el-prisma-model-end block)
-                 (> (el-prisma-model-end block) len))
+      (when (and (prisma-model-end block)
+                 (> (prisma-model-end block) len))
         (plist-put block :end len)))
-    (el-prisma-model-document
+    (prisma-model-document
      :start 0 :end len
      :source-format 'org
      :children blocks)))
 
-(defun el-prisma-org--parse-blocks (lines pos)
+(defun prisma-org--parse-blocks (lines pos)
   "Parse LINES into block-level model nodes. POS is byte offset."
   (let ((result nil)
         (i 0)
@@ -262,9 +262,9 @@ Returns (node . end-pos) or nil."
                  (heading-text (match-string 2 line))
                  (line-end (+ cur-pos (length line)))
                  (content-start (+ cur-pos level 1))
-                 (children (el-prisma-org--parse-inlines
+                 (children (prisma-org--parse-inlines
                             heading-text content-start)))
-            (push (el-prisma-model-heading
+            (push (prisma-model-heading
                    :level level
                    :children children
                    :start cur-pos :end line-end
@@ -299,7 +299,7 @@ Returns (node . end-pos) or nil."
                                                (nreverse body-lines) "\n")
                                     "\n")
                           "")))
-              (push (el-prisma-model-code-block
+              (push (prisma-model-code-block
                      :language (when (and lang (not (string-empty-p lang)))
                                  lang)
                      :body body
@@ -324,10 +324,10 @@ Returns (node . end-pos) or nil."
                   (push bline inner-lines)
                   (setq cur-pos (+ cur-pos (length bline) 1))
                   (setq i (1+ i)))))
-            (let* ((inner-blocks (el-prisma-org--parse-blocks
+            (let* ((inner-blocks (prisma-org--parse-blocks
                                   (nreverse inner-lines)
                                   (+ block-start (length line) 1))))
-              (push (el-prisma-model-blockquote
+              (push (prisma-model-blockquote
                      :children inner-blocks
                      :start block-start :end cur-pos
                      :source-format 'org)
@@ -344,7 +344,7 @@ Returns (node . end-pos) or nil."
               (setq i (1+ i)))
             (let ((text (mapconcat #'identity
                                    (nreverse table-lines) "\n")))
-              (push (el-prisma-model-passthrough
+              (push (prisma-model-passthrough
                      :text text
                      :start table-start
                      :end (1- cur-pos)
@@ -353,7 +353,7 @@ Returns (node . end-pos) or nil."
 
          ;; Horizontal rule: -----
          ((string-match "^-\\{5,\\}$" line)
-          (push (el-prisma-model-horiz-rule
+          (push (prisma-model-horiz-rule
                  :start cur-pos
                  :end (+ cur-pos (length line))
                  :source-format 'org)
@@ -363,21 +363,21 @@ Returns (node . end-pos) or nil."
 
          ;; List: - item or N. item
          ((string-match "^\\(?:- \\|[0-9]+\\. \\)" line)
-          (let* ((list-result (el-prisma-org--parse-list lines i cur-pos)))
+          (let* ((list-result (prisma-org--parse-list lines i cur-pos)))
             (push (car list-result) result)
             (setq i (cadr list-result))
             (setq cur-pos (caddr list-result))))
 
          ;; Paragraph: anything else
          (t
-          (let* ((para-result (el-prisma-org--parse-paragraph
+          (let* ((para-result (prisma-org--parse-paragraph
                                lines i cur-pos)))
             (push (car para-result) result)
             (setq i (cadr para-result))
             (setq cur-pos (caddr para-result)))))))
     (nreverse result)))
 
-(defun el-prisma-org--parse-list (lines start-i pos)
+(defun prisma-org--parse-list (lines start-i pos)
   "Parse a list starting at START-I in LINES at byte POS.
 Returns (list-node next-i next-pos)."
   (let ((items nil)
@@ -412,9 +412,9 @@ Returns (list-node next-i next-pos)."
                        (t (replace-regexp-in-string
                            "^\\(?:- \\|[0-9]+\\. \\)" "" line))))
              (content-offset (- (length line) (length content)))
-             (children (el-prisma-org--parse-inlines
+             (children (prisma-org--parse-inlines
                         content (+ cur-pos content-offset))))
-        (push (el-prisma-model-list-item
+        (push (prisma-model-list-item
                :checkbox checkbox
                :children children
                :start item-start
@@ -423,14 +423,14 @@ Returns (list-node next-i next-pos)."
               items)
         (setq cur-pos (+ cur-pos (length line) 1))
         (setq i (1+ i))))
-    (list (el-prisma-model-list
+    (list (prisma-model-list
            :ordered ordered
            :children (nreverse items)
            :start list-start :end (1- cur-pos)
            :source-format 'org)
           i cur-pos)))
 
-(defun el-prisma-org--parse-paragraph (lines start-i pos)
+(defun prisma-org--parse-paragraph (lines start-i pos)
   "Parse a paragraph starting at START-I in LINES at byte POS.
 Collects consecutive non-blank, non-structural lines.
 Returns (paragraph-node next-i next-pos)."
@@ -452,8 +452,8 @@ Returns (paragraph-node next-i next-pos)."
       (setq cur-pos (+ cur-pos (length (nth i lines)) 1))
       (setq i (1+ i)))
     (let* ((para-text (mapconcat #'identity (nreverse para-lines) "\n"))
-           (children (el-prisma-org--parse-inlines para-text para-start)))
-      (list (el-prisma-model-paragraph
+           (children (prisma-org--parse-inlines para-text para-start)))
+      (list (prisma-model-paragraph
              :children children
              :start para-start :end (1- cur-pos)
              :source-format 'org)
@@ -461,62 +461,62 @@ Returns (paragraph-node next-i next-pos)."
 
 ;;;; Renderer - public API
 
-(defun el-prisma-org-render (ast)
+(defun prisma-org-render (ast)
   "Render model AST to Org format string."
-  (el-prisma-org--render-node ast))
+  (prisma-org--render-node ast))
 
-(defun el-prisma-org--render-node (node)
+(defun prisma-org--render-node (node)
   "Render a single model NODE to Org syntax."
-  (pcase (el-prisma-model-type node)
+  (pcase (prisma-model-type node)
     ('document
-     (el-prisma-org--render-blocks (el-prisma-model-children node)))
+     (prisma-org--render-blocks (prisma-model-children node)))
     ('heading
-     (let ((level (or (el-prisma-model-prop node :level) 1)))
+     (let ((level (or (prisma-model-prop node :level) 1)))
        (concat (make-string level ?*) " "
-               (el-prisma-org--render-children node))))
-    ('paragraph (el-prisma-org--render-children node))
-    ('text (el-prisma-model-prop node :value))
-    ('strong (concat "*" (el-prisma-org--render-children node) "*"))
-    ('emphasis (concat "/" (el-prisma-org--render-children node) "/"))
-    ('code (concat "~" (el-prisma-model-prop node :value) "~"))
-    ('verbatim (concat "=" (el-prisma-model-prop node :value) "="))
-    ('strike (concat "+" (el-prisma-org--render-children node) "+"))
+               (prisma-org--render-children node))))
+    ('paragraph (prisma-org--render-children node))
+    ('text (prisma-model-prop node :value))
+    ('strong (concat "*" (prisma-org--render-children node) "*"))
+    ('emphasis (concat "/" (prisma-org--render-children node) "/"))
+    ('code (concat "~" (prisma-model-prop node :value) "~"))
+    ('verbatim (concat "=" (prisma-model-prop node :value) "="))
+    ('strike (concat "+" (prisma-org--render-children node) "+"))
     ('link
-     (let ((url (or (el-prisma-model-prop node :url) ""))
-           (desc (el-prisma-org--render-children node)))
+     (let ((url (or (prisma-model-prop node :url) ""))
+           (desc (prisma-org--render-children node)))
        (if (and desc (not (string-empty-p desc)))
            (format "[[%s][%s]]" url desc)
          (format "[[%s]]" url))))
     ('image
-     (let ((url (or (el-prisma-model-prop node :url) ""))
-           (alt (or (el-prisma-model-prop node :alt) "")))
+     (let ((url (or (prisma-model-prop node :url) ""))
+           (alt (or (prisma-model-prop node :alt) "")))
        ;; Render as MD syntax passthrough since Org has no
        ;; distinct image-with-alt syntax
        (format "![%s](%s)" alt url)))
     ('linebreak "\\\\\n")
     ('code-block
-     (let ((lang (or (el-prisma-model-prop node :language) ""))
-           (body (or (el-prisma-model-prop node :body) "")))
+     (let ((lang (or (prisma-model-prop node :language) ""))
+           (body (or (prisma-model-prop node :body) "")))
        (concat "#+begin_src " lang "\n" body
                (if (string-suffix-p "\n" body) "" "\n")
                "#+end_src")))
-    ('list (el-prisma-org--render-list node))
-    ('list-item (el-prisma-org--render-list-item node nil))
+    ('list (prisma-org--render-list node))
+    ('list-item (prisma-org--render-list-item node nil))
     ('blockquote
-     (let ((content (mapconcat #'el-prisma-org--render-node
-                               (el-prisma-model-children node) "\n")))
+     (let ((content (mapconcat #'prisma-org--render-node
+                               (prisma-model-children node) "\n")))
        (concat "#+begin_quote\n" content "\n#+end_quote")))
     ('horiz-rule "-----")
     ('passthrough
-     (string-trim-right (or (el-prisma-model-prop node :text) "") "\n"))
-    (_ (or (el-prisma-model-prop node :text)
-           (el-prisma-org--render-children node)))))
+     (string-trim-right (or (prisma-model-prop node :text) "") "\n"))
+    (_ (or (prisma-model-prop node :text)
+           (prisma-org--render-children node)))))
 
-(defun el-prisma-org--render-blocks (nodes)
+(defun prisma-org--render-blocks (nodes)
   "Render block-level NODES with proper inter-block spacing."
   (let (parts)
     (dolist (node nodes)
-      (let ((rendered (el-prisma-org--render-node node)))
+      (let ((rendered (prisma-org--render-node node)))
         (when (and parts (not (string-empty-p rendered)))
           (let ((prev (car parts)))
             ;; Don't double up newlines
@@ -525,26 +525,26 @@ Returns (paragraph-node next-i next-pos)."
         (push rendered parts)))
     (apply #'concat (nreverse parts))))
 
-(defun el-prisma-org--render-children (node)
+(defun prisma-org--render-children (node)
   "Render children of NODE concatenated."
-  (mapconcat #'el-prisma-org--render-node
-             (el-prisma-model-children node) ""))
+  (mapconcat #'prisma-org--render-node
+             (prisma-model-children node) ""))
 
-(defun el-prisma-org--render-list (node)
+(defun prisma-org--render-list (node)
   "Render a list NODE to Org."
-  (let ((ordered (el-prisma-model-prop node :ordered))
-        (items (el-prisma-model-children node))
+  (let ((ordered (prisma-model-prop node :ordered))
+        (items (prisma-model-children node))
         (idx 0))
     (mapconcat (lambda (item)
                  (setq idx (1+ idx))
-                 (el-prisma-org--render-list-item item ordered idx))
+                 (prisma-org--render-list-item item ordered idx))
                items "\n")))
 
-(defun el-prisma-org--render-list-item (node ordered &optional idx)
+(defun prisma-org--render-list-item (node ordered &optional idx)
   "Render a list-item NODE to Org."
   (let ((marker (if ordered (format "%d. " (or idx 1)) "- "))
-        (checkbox (el-prisma-model-prop node :checkbox))
-        (content (el-prisma-org--render-children node)))
+        (checkbox (prisma-model-prop node :checkbox))
+        (content (prisma-org--render-children node)))
     (concat marker
             (pcase checkbox
               ('checked "[X] ")
@@ -552,5 +552,5 @@ Returns (paragraph-node next-i next-pos)."
               (_ ""))
             content)))
 
-(provide 'el-prisma-org)
-;;; el-prisma-org.el ends here
+(provide 'prisma-org)
+;;; prisma-org.el ends here

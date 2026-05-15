@@ -8,8 +8,8 @@
 - Org parser (regex blocks, hand-written inline with emphasis boundary rules)
 - Structural AST diff (content-hash matching)
 - Patch engine (byte-range replacement, reverse-order application, trailing newline preservation)
-- Buffer manager: =el-prisma-convert=, =el-prisma-commit=, =el-prisma-cancel=, =el-prisma-diff=
-- =el-prisma-mirror-mode= with header-line showing keybindings
+- Buffer manager: =prisma-convert=, =prisma-commit=, =prisma-cancel=, =prisma-diff=
+- =prisma-mirror-mode= with header-line showing keybindings
 - Same-window seamless transitions with AST-based cursor position mapping
 - Passthrough for format-specific constructs (tables, images, unrecognized markup)
 - Concurrent source modification detection

@@ -1,4 +1,4 @@
-;;; el-prisma-text-diff-tests.el --- Tests for commit pipeline primitives -*- lexical-binding: t; no-byte-compile: t; -*-
+;;; prisma-text-diff-tests.el --- Tests for commit pipeline primitives -*- lexical-binding: t; no-byte-compile: t; -*-
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
@@ -9,36 +9,36 @@
 ;;; Code:
 
 (require 'buttercup)
-(require 'el-prisma)
-(require 'el-prisma-model)
+(require 'prisma)
+(require 'prisma-model)
 
 ;;;; render-with-map
 
-(describe "el-prisma-render-with-map"
+(describe "prisma-render-with-map"
 
   (it "returns rendered text and map as cons"
-    (let* ((ast (el-prisma-model-node
+    (let* ((ast (prisma-model-node
                  'document
-                 :children (list (el-prisma-model-paragraph
-                                  :children (list (el-prisma-model-text :value "Hello."))
+                 :children (list (prisma-model-paragraph
+                                  :children (list (prisma-model-text :value "Hello."))
                                   :start 0 :end 6))))
-           (result (el-prisma-render-with-map 'org ast)))
+           (result (prisma-render-with-map 'org ast)))
       (expect (consp result) :to-be-truthy)
       (expect (stringp (car result)) :to-be-truthy)
       (expect (listp (cdr result)) :to-be-truthy)))
 
   (it "map entries match rendered text boundaries"
-    (let* ((ast (el-prisma-model-node
+    (let* ((ast (prisma-model-node
                  'document
                  :children (list
-                            (el-prisma-model-heading
+                            (prisma-model-heading
                              :level 1
-                             :children (list (el-prisma-model-text :value "Title"))
+                             :children (list (prisma-model-text :value "Title"))
                              :start 0 :end 8)
-                            (el-prisma-model-paragraph
-                             :children (list (el-prisma-model-text :value "Body text."))
+                            (prisma-model-paragraph
+                             :children (list (prisma-model-text :value "Body text."))
                              :start 10 :end 20))))
-           (result (el-prisma-render-with-map 'org ast))
+           (result (prisma-render-with-map 'org ast))
            (text (car result))
            (rmap (cdr result)))
       ;; Each map entry's [start, end) should extract that node's rendered text
@@ -51,20 +51,20 @@
           (expect (length (substring text mstart mend)) :to-be-greater-than 0)))))
 
   (it "map covers heading, paragraph, code block"
-    (let* ((ast (el-prisma-model-node
+    (let* ((ast (prisma-model-node
                  'document
                  :children (list
-                            (el-prisma-model-heading
+                            (prisma-model-heading
                              :level 2
-                             :children (list (el-prisma-model-text :value "Section"))
+                             :children (list (prisma-model-text :value "Section"))
                              :start 0 :end 12)
-                            (el-prisma-model-paragraph
-                             :children (list (el-prisma-model-text :value "Some text."))
+                            (prisma-model-paragraph
+                             :children (list (prisma-model-text :value "Some text."))
                              :start 14 :end 24)
-                            (el-prisma-model-code-block
+                            (prisma-model-code-block
                              :language "python" :body "pass"
                              :start 26 :end 46))))
-           (result (el-prisma-render-with-map 'org ast))
+           (result (prisma-render-with-map 'org ast))
            (text (car result))
            (rmap (cdr result)))
       (expect (length rmap) :to-equal 3)
@@ -89,20 +89,20 @@
               :to-match "begin_src")))
 
   (it "map entries are contiguous (no gaps or overlaps)"
-    (let* ((ast (el-prisma-model-node
+    (let* ((ast (prisma-model-node
                  'document
                  :children (list
-                            (el-prisma-model-heading
+                            (prisma-model-heading
                              :level 1
-                             :children (list (el-prisma-model-text :value "A"))
+                             :children (list (prisma-model-text :value "A"))
                              :start 0 :end 4)
-                            (el-prisma-model-paragraph
-                             :children (list (el-prisma-model-text :value "B"))
+                            (prisma-model-paragraph
+                             :children (list (prisma-model-text :value "B"))
                              :start 6 :end 8)
-                            (el-prisma-model-paragraph
-                             :children (list (el-prisma-model-text :value "C"))
+                            (prisma-model-paragraph
+                             :children (list (prisma-model-text :value "C"))
                              :start 10 :end 12))))
-           (result (el-prisma-render-with-map 'org ast))
+           (result (prisma-render-with-map 'org ast))
            (text (car result))
            (rmap (cdr result)))
       ;; First entry starts at 0
@@ -117,13 +117,13 @@
                do (expect (>= (nth 2 curr) (nth 3 prev)) :to-be-truthy))))
 
   (it "handles single-node document"
-    (let* ((ast (el-prisma-model-node
+    (let* ((ast (prisma-model-node
                  'document
                  :children (list
-                            (el-prisma-model-paragraph
-                             :children (list (el-prisma-model-text :value "Only."))
+                            (prisma-model-paragraph
+                             :children (list (prisma-model-text :value "Only."))
                              :start 0 :end 5))))
-           (result (el-prisma-render-with-map 'org ast))
+           (result (prisma-render-with-map 'org ast))
            (text (car result))
            (rmap (cdr result)))
       (expect (length rmap) :to-equal 1)
@@ -131,15 +131,15 @@
       (expect (nth 3 (car rmap)) :to-equal (length text))))
 
   (it "handles table node"
-    (let* ((ast (el-prisma-model-node
+    (let* ((ast (prisma-model-node
                  'document
                  :children (list
-                            (el-prisma-model-node
+                            (prisma-model-node
                              'table
                              :start 0 :end 30
                              :props '(:header ("A" "B")
                                       :rows (("1" "2")))))))
-           (result (el-prisma-render-with-map 'org ast))
+           (result (prisma-render-with-map 'org ast))
            (rmap (cdr result)))
       ;; Table node produces a render map entry regardless of rendered content
       (expect (length rmap) :to-equal 1)
@@ -147,15 +147,15 @@
 
 ;;;; scan-property-intervals
 
-(describe "el-prisma--scan-property-intervals"
+(describe "prisma--scan-property-intervals"
 
   (it "returns segments for a propertized buffer"
     (with-temp-buffer
       (insert "AAABBBCCC")
-      (put-text-property 1 4 'el-prisma-node-idx 0)
-      (put-text-property 4 7 'el-prisma-node-idx 1)
-      (put-text-property 7 10 'el-prisma-node-idx 2)
-      (let ((segs (el-prisma--scan-property-intervals)))
+      (put-text-property 1 4 'prisma-node-idx 0)
+      (put-text-property 4 7 'prisma-node-idx 1)
+      (put-text-property 7 10 'prisma-node-idx 2)
+      (let ((segs (prisma--scan-property-intervals)))
         (expect (length segs) :to-equal 3)
         ;; Each segment has the correct idx
         (expect (nth 2 (nth 0 segs)) :to-equal 0)
@@ -165,10 +165,10 @@
   (it "detects nil-property gaps between nodes"
     (with-temp-buffer
       (insert "AAA--BBB")
-      (put-text-property 1 4 'el-prisma-node-idx 0)
+      (put-text-property 1 4 'prisma-node-idx 0)
       ;; positions 4-6 have no property (the "--" gap)
-      (put-text-property 6 9 'el-prisma-node-idx 1)
-      (let ((segs (el-prisma--scan-property-intervals)))
+      (put-text-property 6 9 'prisma-node-idx 1)
+      (let ((segs (prisma--scan-property-intervals)))
         (expect (length segs) :to-equal 3)
         (expect (nth 2 (nth 0 segs)) :to-equal 0)
         (expect (nth 2 (nth 1 segs)) :to-be nil)
@@ -177,38 +177,38 @@
   (it "handles buffer with no properties"
     (with-temp-buffer
       (insert "plain text")
-      (let ((segs (el-prisma--scan-property-intervals)))
+      (let ((segs (prisma--scan-property-intervals)))
         (expect (length segs) :to-equal 1)
         (expect (nth 2 (car segs)) :to-be nil)))))
 
 ;;;; match-nodes
 
-(describe "el-prisma--match-nodes"
+(describe "prisma--match-nodes"
 
   (it "matches nodes with single-idx property regions"
     (with-temp-buffer
       (insert "AAABBB")
-      (put-text-property 1 4 'el-prisma-node-idx 0)
-      (put-text-property 4 7 'el-prisma-node-idx 1)
-      (let* ((segs (el-prisma--scan-property-intervals))
+      (put-text-property 1 4 'prisma-node-idx 0)
+      (put-text-property 4 7 'prisma-node-idx 1)
+      (let* ((segs (prisma--scan-property-intervals))
              ;; Simulate two AST nodes covering the same ranges (0-based string)
              (children (list (list :type 'paragraph :start 0 :end 3)
                              (list :type 'paragraph :start 3 :end 6)))
-             (matches (el-prisma--match-nodes children "AAABBB" segs)))
+             (matches (prisma--match-nodes children "AAABBB" segs)))
         (expect (aref matches 0) :to-equal 0)
         (expect (aref matches 1) :to-equal 1))))
 
   (it "returns nil for nodes in nil-property regions"
     (with-temp-buffer
       (insert "AAANEWNEWBBB")
-      (put-text-property 1 4 'el-prisma-node-idx 0)
+      (put-text-property 1 4 'prisma-node-idx 0)
       ;; 4-10 is new text with no property
-      (put-text-property 10 13 'el-prisma-node-idx 1)
-      (let* ((segs (el-prisma--scan-property-intervals))
+      (put-text-property 10 13 'prisma-node-idx 1)
+      (let* ((segs (prisma--scan-property-intervals))
              (children (list (list :type 'paragraph :start 0 :end 3)
                              (list :type 'paragraph :start 3 :end 9)
                              (list :type 'paragraph :start 9 :end 12)))
-             (matches (el-prisma--match-nodes children "AAANEWNEWBBB" segs)))
+             (matches (prisma--match-nodes children "AAANEWNEWBBB" segs)))
         (expect (aref matches 0) :to-equal 0)
         (expect (aref matches 1) :to-be nil) ; new content
         (expect (aref matches 2) :to-equal 1))))
@@ -217,12 +217,12 @@
     (with-temp-buffer
       (insert "AAABBB")
       ;; Both regions have the same node-idx (simulating a split)
-      (put-text-property 1 4 'el-prisma-node-idx 0)
-      (put-text-property 4 7 'el-prisma-node-idx 0)
-      (let* ((segs (el-prisma--scan-property-intervals))
+      (put-text-property 1 4 'prisma-node-idx 0)
+      (put-text-property 4 7 'prisma-node-idx 0)
+      (let* ((segs (prisma--scan-property-intervals))
              (children (list (list :type 'paragraph :start 0 :end 3)
                              (list :type 'paragraph :start 3 :end 6)))
-             (matches (el-prisma--match-nodes children "AAABBB" segs)))
+             (matches (prisma--match-nodes children "AAABBB" segs)))
         ;; Both should be nil (conflict)
         (expect (aref matches 0) :to-be nil)
         (expect (aref matches 1) :to-be nil))))
@@ -230,21 +230,21 @@
   (it "handles mixed property regions within a node"
     (with-temp-buffer
       (insert "AAABBB")
-      (put-text-property 1 3 'el-prisma-node-idx 0)
-      (put-text-property 3 5 'el-prisma-node-idx 1)
-      (put-text-property 5 7 'el-prisma-node-idx 2)
-      (let* ((segs (el-prisma--scan-property-intervals))
+      (put-text-property 1 3 'prisma-node-idx 0)
+      (put-text-property 3 5 'prisma-node-idx 1)
+      (put-text-property 5 7 'prisma-node-idx 2)
+      (let* ((segs (prisma--scan-property-intervals))
              ;; One node spanning across properties 0 and 1
              (children (list (list :type 'paragraph :start 0 :end 4)
                              (list :type 'paragraph :start 4 :end 6)))
-             (matches (el-prisma--match-nodes children "AAABBB" segs)))
+             (matches (prisma--match-nodes children "AAABBB" segs)))
         ;; First node has mixed properties -> nil
         (expect (aref matches 0) :to-be nil)
         (expect (aref matches 1) :to-equal 2)))))
 
 ;;;; build-unified-replacement
 
-(describe "el-prisma--build-unified-replacement"
+(describe "prisma--build-unified-replacement"
 
   (it "uses original source bytes for unchanged nodes"
     (let* ((children (list (list :type 'heading :start 0 :end 7)
@@ -254,7 +254,7 @@
            ;; Original source/mirror texts for the 2 nodes
            (source-texts (vector "# Title" "Body text."))
            (mirror-texts (vector "* Title" "Body text."))
-           (result (el-prisma--build-unified-replacement
+           (result (prisma--build-unified-replacement
                     children mirror-text matches
                     source-texts mirror-texts 'markdown 'org)))
       ;; Both unchanged -> uses original source bytes joined with \n\n
@@ -267,7 +267,7 @@
            (matches (vector 0 1))
            (source-texts (vector "# Title" "Body text."))
            (mirror-texts (vector "* Title" "Body text."))
-           (result (el-prisma--build-unified-replacement
+           (result (prisma--build-unified-replacement
                     children mirror-text matches
                     source-texts mirror-texts 'markdown 'org)))
       ;; Heading unchanged (original source), paragraph re-rendered
@@ -282,7 +282,7 @@
            (matches (vector 0 nil 1))
            (source-texts (vector "# Title" "Body text."))
            (mirror-texts (vector "* Title" "Body text."))
-           (result (el-prisma--build-unified-replacement
+           (result (prisma--build-unified-replacement
                     children mirror-text matches
                     source-texts mirror-texts 'markdown 'org)))
       ;; Heading and last paragraph from source, middle is new
@@ -290,35 +290,35 @@
       (expect result :to-match "New paragraph")
       (expect result :to-match "Body text\\.$"))))
 
-;;;; el-prisma--same-structure-p
+;;;; prisma--same-structure-p
 
-(describe "el-prisma--same-structure-p"
+(describe "prisma--same-structure-p"
 
   (it "returns t for identity mapping [0 1 2] with n=3"
-    (expect (el-prisma--same-structure-p (vector 0 1 2) 3)
+    (expect (prisma--same-structure-p (vector 0 1 2) 3)
             :to-be-truthy))
 
   (it "returns nil when a match is nil"
-    (expect (el-prisma--same-structure-p (vector 0 nil 2) 3)
+    (expect (prisma--same-structure-p (vector 0 nil 2) 3)
             :not :to-be-truthy))
 
   (it "returns nil for reordered matches [1 0 2]"
-    (expect (el-prisma--same-structure-p (vector 1 0 2) 3)
+    (expect (prisma--same-structure-p (vector 1 0 2) 3)
             :not :to-be-truthy))
 
   (it "returns nil when length mismatches num-old-nodes"
-    (expect (el-prisma--same-structure-p (vector 0 1) 3)
+    (expect (prisma--same-structure-p (vector 0 1) 3)
             :not :to-be-truthy)
-    (expect (el-prisma--same-structure-p (vector 0 1 2 3) 3)
+    (expect (prisma--same-structure-p (vector 0 1 2 3) 3)
             :not :to-be-truthy))
 
   (it "returns t for empty matches with n=0"
-    (expect (el-prisma--same-structure-p (vector) 0)
+    (expect (prisma--same-structure-p (vector) 0)
             :to-be-truthy)))
 
-;;;; el-prisma--patch-in-place
+;;;; prisma--patch-in-place
 
-(describe "el-prisma--patch-in-place"
+(describe "prisma--patch-in-place"
 
   (it "returns source-text unchanged when no node text differs"
     (let* ((src "Hello world.")
@@ -328,7 +328,7 @@
            (new-child (list :type 'paragraph :start 0 :end 12))
            (mirror "Hello world.")
            (mirror-texts (vector "Hello world.")))
-      (expect (el-prisma--patch-in-place
+      (expect (prisma--patch-in-place
                src render-map matches
                (list new-child) mirror
                mirror-texts 'markdown 'org)
@@ -347,7 +347,7 @@
            (new0 (list :type 'heading :start 0 :end 7))
            (new1 (list :type 'paragraph :start 9 :end 22))
            (mirror-texts (vector "* First" "Second para."))
-           (result (el-prisma--patch-in-place
+           (result (prisma--patch-in-place
                     src render-map matches
                     (list new0 new1) mirror
                     mirror-texts 'markdown 'org)))
@@ -388,7 +388,7 @@
            (m4 (list :type 'h :start 36 :end 43))
            (m5 (list :type 'p :start 45 :end 51))
            (mtexts (vector "* Title" "Intro." "** Sec1" "Body1." "** Sec2" "Body2."))
-           (result (el-prisma--patch-in-place
+           (result (prisma--patch-in-place
                     src rmap matches
                     (list m0 m1 m2 m3 m4 m5) mirror
                     mtexts 'markdown 'org)))
@@ -416,7 +416,7 @@
            (m1 (list :type 'p :start 5 :end 11))
            (m2 (list :type 'p :start 13 :end 19))
            (mtexts (vector "* A" "B text." "C text."))
-           (result (el-prisma--patch-in-place
+           (result (prisma--patch-in-place
                     src rmap matches
                     (list m0 m1 m2) mirror
                     mtexts 'markdown 'org)))
@@ -429,5 +429,5 @@
       (expect result :to-match "\n\n\n[^\n]")
       (expect result :to-match "\n\n\n\n[^\n]"))))
 
-(provide 'el-prisma-text-diff-tests)
-;;; el-prisma-text-diff-tests.el ends here
+(provide 'prisma-text-diff-tests)
+;;; prisma-text-diff-tests.el ends here

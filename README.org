@@ -4,7 +4,7 @@ Same content, different spectrum.
 
 * Seamless conversion and editing
 
-Open a Markdown file, run =el-prisma-convert=, and you're editing in Org mode. Rearrange headings with =org-metaup=, restructure lists, refactor content - use the full power of Org. When done, =C-c C-c= commits your changes back. The source Markdown updates surgically: only the regions you touched change, everything else stays byte-identical.
+Open a Markdown file, run =prisma-convert=, and you're editing in Org mode. Rearrange headings with =org-metaup=, restructure lists, refactor content - use the full power of Org. When done, =C-c C-c= commits your changes back. The source Markdown updates surgically: only the regions you touched change, everything else stays byte-identical.
 
 Works the other way too - convert Org to Markdown when you need GitHub-flavored output.
 
@@ -12,7 +12,7 @@ Currently supported: Markdown (GFM) <-> Org
 
 * How it works
 
-El Prisma builds a render map during conversion that tracks which source AST node produced which region of mirror text. On commit, it text-diffs the mirror (before vs after your edits), identifies the affected source nodes, re-parses just those regions, and patches them back. Unchanged regions - tables, code blocks, links, metadata - pass through untouched.
+Prisma builds a render map during conversion that tracks which source AST node produced which region of mirror text. On commit, it text-diffs the mirror (before vs after your edits), identifies the affected source nodes, re-parses just those regions, and patches them back. Unchanged regions - tables, code blocks, links, metadata - pass through untouched.
 
 This is not Pandoc. There is no whole-document re-serialization, no normalization, no lost formatting. Format-specific constructs with no target equivalent pass through as literal text and round-trip verbatim.
 
@@ -20,7 +20,7 @@ This is not Pandoc. There is no whole-document re-serialization, no normalizatio
 
 #+begin_src emacs-lisp
 ;; In a Markdown buffer:
-M-x el-prisma-convert    ; opens Org mirror, cursor on same heading
+M-x prisma-convert       ; opens Org mirror, cursor on same heading
 
 ;; Edit freely - rearrange, refactor, restructure:
 C-c C-c                  ; commit changes back to source

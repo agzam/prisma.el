@@ -30,27 +30,27 @@ deps: $(ELPA_DIR)
 test: $(ELPA_DIR)
 	$(EMACS_BATCH) --directory . \
 	--eval "(setq buttercup-stack-frame-style 'omit)" \
-	-l test/el-prisma-tests.el \
-	-l test/el-prisma-peg-tests.el \
-	-l test/el-prisma-diff-tests.el \
-	-l test/el-prisma-patch-tests.el \
-	-l test/el-prisma-org-tests.el \
-	-l test/el-prisma-text-diff-tests.el \
+	-l test/prisma-tests.el \
+	-l test/prisma-peg-tests.el \
+	-l test/prisma-diff-tests.el \
+	-l test/prisma-patch-tests.el \
+	-l test/prisma-org-tests.el \
+	-l test/prisma-text-diff-tests.el \
 	--funcall buttercup-run
 
 test-e2e: $(ELPA_DIR)
 	$(EMACS_BATCH) --directory . \
 	--eval "(dolist (d '(\"$(HOME)/.emacs.d/.local/cache/tree-sitter\" \"$(HOME)/.emacs.d/tree-sitter\")) (when (file-directory-p d) (push d treesit-extra-load-path)))" \
 	--eval "(setq buttercup-stack-frame-style 'omit)" \
-	-l test/el-prisma-tests.el \
-	-l test/el-prisma-peg-tests.el \
-	-l test/el-prisma-diff-tests.el \
-	-l test/el-prisma-patch-tests.el \
-	-l test/el-prisma-org-tests.el \
-	-l test/el-prisma-md-tests.el \
-	-l test/el-prisma-text-diff-tests.el \
-	-l test/el-prisma-fixture-tests.el \
-	-l test/el-prisma-isolation-tests.el \
+	-l test/prisma-tests.el \
+	-l test/prisma-peg-tests.el \
+	-l test/prisma-diff-tests.el \
+	-l test/prisma-patch-tests.el \
+	-l test/prisma-org-tests.el \
+	-l test/prisma-md-tests.el \
+	-l test/prisma-text-diff-tests.el \
+	-l test/prisma-fixture-tests.el \
+	-l test/prisma-isolation-tests.el \
 	--funcall buttercup-run
 
 test-live:
@@ -58,13 +58,13 @@ test-live:
 
 check-autoloads:
 	@echo "Generating and loading autoloads..."
-	rm -f el-prisma-autoloads.el
+	rm -f prisma-autoloads.el
 	emacs -Q --batch \
-	--eval "(setq generated-autoload-file (expand-file-name \"el-prisma-autoloads.el\" \"$(CURDIR)\"))" \
+	--eval "(setq generated-autoload-file (expand-file-name \"prisma-autoloads.el\" \"$(CURDIR)\"))" \
 	--eval "(update-directory-autoloads \"$(CURDIR)\")" \
 	--eval "(load generated-autoload-file nil 'nomessage)"
 
-SRCS = el-prisma.el el-prisma-model.el el-prisma-peg.el el-prisma-diff.el el-prisma-patch.el el-prisma-ts.el el-prisma-md.el el-prisma-org.el
+SRCS = prisma.el prisma-model.el prisma-peg.el prisma-diff.el prisma-patch.el prisma-ts.el prisma-md.el prisma-org.el
 
 check-compile: $(ELPA_DIR) check-autoloads
 	@echo "Checking byte-compilation..."
