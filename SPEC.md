@@ -208,17 +208,9 @@ Every node carries source position metadata:
 | strike     | :children               | `~~text~~`       | `+text+`         |
 | passthrough| :text                   | verbatim         | verbatim         |
 
-### Data nodes (JSON <-> EDN)
+### Data nodes (JSON <-> EDN) - Phase 2, not yet implemented
 
-| Node Type | Props             | JSON             | EDN           |
-|-----------|-------------------|------------------|---------------|
-| map       | :entries          | `{"k": v}`       | `{"k" v}`     |
-| array     | :elements         | `[1, 2]`         | `[1 2]`       |
-| string    | :value            | `"text"`         | `"text"`      |
-| number    | :value            | `42`, `3.14`     | `42`, `3.14`  |
-| boolean   | :value            | `true`/`false`   | `true`/`false`|
-| null      |                   | `null`           | `nil`         |
-| map-entry | :key, :value      | `"k": v`         | `"k" v`       |
+Reserved for future JSON/EDN conversion support.
 
 ---
 
@@ -449,10 +441,7 @@ disagreements to validate against.
 (el-prisma-diff-ast AST-1 AST-2)
 
 ;; Apply a diff to source text, return patched string
-(el-prisma-patch SOURCE-TEXT DIFF SOURCE-FORMAT)
-
-;; Register a new conversion pair
-(el-prisma-register-pair SOURCE-FORMAT TARGET-FORMAT &key parser renderer)
+(el-prisma-patch SOURCE-TEXT DIFF RENDER-FN)
 ```
 
 ## Customization
@@ -461,18 +450,8 @@ disagreements to validate against.
 ;; Alist of (source-format . default-target-format)
 (defcustom el-prisma-default-targets
   '((markdown-mode . org)
-    (gfm-mode . org)
-    (json-mode . edn)
-    (json-ts-mode . edn)
-    (js-json-mode . edn))
+    (gfm-mode . org))
   ...)
-
-;; Whether to run round-trip validation on commit
-(defcustom el-prisma-validate-on-commit t ...)
-
-;; How to display the mirror buffer
-(defcustom el-prisma-display-action
-  '(display-buffer-pop-up-window) ...)
 ```
 
 ---
@@ -513,11 +492,10 @@ Passthrough text round-trips verbatim by definition.
 
 ### Emphasis ambiguity
 
-Markdown and Org have different emphasis boundary rules. El Prisma's PEG grammar
-for Org inline content uses Markdown-compatible rules when the source was
-Markdown. This means some valid Org emphasis patterns won't be recognized if
-they wouldn't work in Markdown - this is intentional and prevents ambiguous
-round-trips.
+Markdown and Org have different emphasis boundary rules. El Prisma's hand-written
+Org inline parser follows Org emphasis rules (pre/post-conditions on delimiters).
+Some edge cases at emphasis boundaries may not round-trip perfectly - this is
+acceptable as the common cases work correctly.
 
 ### Links
 
@@ -627,8 +605,7 @@ prisma.el/
 - [x] el-prisma-mirror-mode
 - [x] Commit flow with patch engine
 - [x] Cancel flow
-- [x] Round-trip validation (optional, off by default)
-- [ ] Region conversion support
+- [x] Region conversion support
 
 ### Phase 5: Polish
 - [x] Concurrent modification detection

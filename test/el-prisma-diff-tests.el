@@ -170,21 +170,6 @@
                  (car (el-prisma-model-children (car (nth 1 pairs)))) :value)
                 :to-equal "second"))))
 
-  (describe "data node diffing"
-    (it "diffs map children"
-      (let* ((e1 (el-prisma-model-map-entry
-                  :key (el-prisma-model-string :value "a")
-                  :value (el-prisma-model-number :value 1)))
-             (e2 (el-prisma-model-map-entry
-                  :key (el-prisma-model-string :value "b")
-                  :value (el-prisma-model-number :value 2)))
-             (e2-mod (el-prisma-model-map-entry
-                      :key (el-prisma-model-string :value "b")
-                      :value (el-prisma-model-number :value 99)))
-             (a (el-prisma-model-map :children (list e1 e2)))
-             (b (el-prisma-model-map :children (list e1 e2-mod)))
-             (d (el-prisma-diff-ast a b)))
-        (expect (length (plist-get d :unchanged)) :to-equal 1)
-        (expect (length (plist-get d :modified)) :to-equal 1)))))
+)
 
 ;;; el-prisma-diff-tests.el ends here

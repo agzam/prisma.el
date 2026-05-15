@@ -1,73 +1,50 @@
 # El Prisma - Architecture and Status
 
-## Current architecture (v1.1)
+## Current architecture (v2.0 - unified commit)
 
 ### Commit pipeline
 
-The commit flow has three paths based on what changed in the mirror:
+The commit flow uses a single unified path:
 
 1. No change: `string=` old vs new mirror -> short-circuit, kill mirror
-2. In-place edit (same line count): line-based diff -> per-node extraction -> re-parse/re-render -> patch
-3. In-place edit (different line count): line-based diff -> adjusted byte extraction (accounting for length delta) -> filter unchanged nodes -> re-parse/re-render -> patch
-4. Rearrangement (node order changed): property-based order detection -> reconstruct source from original node bytes in new order -> patch
+2. Re-parse entire edited mirror -> new AST
+3. Match new AST nodes to original nodes via `el-prisma-node-idx` text properties
+4. For each new node: if matched + unchanged mirror text -> use original source bytes; else re-render
+5. Assemble replacement and write to source
 
 ### Key components
 
 - `el-prisma-render-with-map`: renders AST to target format, produces render map (node-idx -> mirror byte range)
-- `el-prisma-node-idx` text property: tagged on mirror regions during convert, travels with text through org-metaup/down
-- `el-prisma--mirror-node-order`: reads property order from mirror buffer
-- `el-prisma--find-changed-nodes`: line-based detection for edits (handles both same and different line counts)
-- `el-prisma--build-reorder-ops`: reconstructs source in new node order using original source bytes
-- `el-prisma--apply-patch-ops`: applies ops with trailing whitespace preservation
+- `el-prisma-node-idx` text property: tagged on mirror regions during convert, travels with text through kill/yank and org-metaup/down
+- `el-prisma--source-texts` / `el-prisma--mirror-texts`: per-node original text vectors stored at convert time (the "complement")
+- `el-prisma--scan-property-intervals`: walks mirror buffer collecting property segments
+- `el-prisma--match-nodes`: matches re-parsed AST nodes to originals via property hints, resolves conflicts (split detection)
+- `el-prisma--build-unified-replacement`: assembles result - original bytes for unchanged, re-rendered for changed/new
 - Data loss safeguard: refuses to kill mirror if patch produces unchanged source
 
-### How edits work
+### FIXED: whitespace normalization
 
-1. Text-diff old vs new mirror -> changed line indices
-2. Convert to byte range (clamped to available lines)
-3. Find overlapping render map entries
-4. For same line count: extract per-node using line numbers
-5. For different line count: extract using adjusted byte positions, filter nodes whose text didn't actually change
-6. Merge adjacent changed nodes, re-parse combined mirror text, render to source format
-7. Apply patch ops to source text
-
-### How rearrangement works
-
-1. Read `el-prisma-node-idx` property order from mirror buffer
-2. Compare against original order (skipping zero-length nodes)
-3. If different: for each node in new order, take its original source bytes
-4. Join with `\n\n`, create single replacement op covering full range
-5. Apply with trailing whitespace preservation
-
-### Cursor position mapping
-
-Uses render map to build synthetic nodes with mirror byte positions. `el-prisma--map-position` finds containing node by index, computes proportional offset within the node.
+`el-prisma--build-unified-replacement` used to reassemble the entire document by stripping trailing newlines and joining with `\n\n`, normalizing all inter-block whitespace. Fixed via patch-in-place for same/near-same-structure edits and improved reassembly with original whitespace preservation for the fallback path. Single word edit in 36KB file now produces exactly 1 line diff.
 
 ## What's done
 
-- [x] Render map (task 1)
-- [x] Text diff (task 2)
-- [x] Region-to-node mapping (task 3)
-- [x] Per-node re-parse (task 4)
-- [x] Rewritten commit flow (task 5)
-- [x] Dead code removal (task 6)
-- [x] Unit tests for text-diff primitives
-- [x] E2E tests: in-place edits, rearrangements, baselines, cursor
-- [x] Cursor position fix (synthetic mirror-position nodes)
-- [x] Blank-line preservation (trailing whitespace pattern)
+- [x] Unified commit pipeline (re-parse + property-match)
+- [x] Node insertion/deletion support
+- [x] Reorder support (via text property travel)
+- [x] Combined reorder + edit
+- [x] Boundary-crossing edits (merge/split nodes)
 - [x] Data loss safeguard
-- [x] Text-property node tracking for rearrangement
-- [x] Line-count-changing edit fix (insertion/deletion)
-- [x] Comprehensive test matrix (STRATEGY.md groups B, C, D, F)
+- [x] Comprehensive isolation tests (41 specs)
+- [x] Fixture tests (71 specs)
+- [x] Unit tests for commit primitives
+- [x] Region conversion support
+- [x] Cursor position mapping
 
 ## Remaining work
 
-- [ ] Complete test matrix from STRATEGY.md (groups A, B2/B3/B6, C2, D1/D2/D4/D5, E1/E2, F2/F4)
-- [ ] Add insertion/deletion E2E test (emoji in code block scenario)
-- [ ] Rearrangement cosmetic: ~6 extra blank lines from `\n\n` joining (functional, not correctness issue)
-- [ ] JSON/EDN conversion (phase 2)
-
-## Not in scope
-
-- JSON/EDN conversion (phase 2)
-- Org parser improvements beyond what's needed for per-node re-parse
+- [x] FIX: patch-in-place for same-structure edits (whitespace normalization bug)
+- [x] FIX: buttercup tests - not silently swallowing; `make test` simply didn't load isolation tests. `make test-e2e` runs them and they pass.
+- [x] Improve structural-change reassembly to preserve unchanged consecutive runs
+- [x] Test with real-world large markdown files (36KB, 1 diff for 1-word edit)
+- [ ] Complete test matrix from STRATEGY.md
+- [ ] Documentation

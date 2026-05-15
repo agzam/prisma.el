@@ -49,19 +49,12 @@ test-e2e: $(ELPA_DIR)
 	-l test/el-prisma-org-tests.el \
 	-l test/el-prisma-md-tests.el \
 	-l test/el-prisma-text-diff-tests.el \
-	-l test/el-prisma-e2e-tests.el \
+	-l test/el-prisma-fixture-tests.el \
+	-l test/el-prisma-isolation-tests.el \
 	--funcall buttercup-run
 
 test-live:
-	@echo "Running E2E tests in live Emacs via emacsclient..."
-	@emacsclient -e "(progn \
-	  (add-to-list 'load-path \"$(CURDIR)\") \
-	  (dolist (feat '(el-prisma-model el-prisma-peg el-prisma-ts \
-	                  el-prisma-diff el-prisma-patch \
-	                  el-prisma-md el-prisma-org el-prisma)) \
-	    (when (featurep feat) (unload-feature feat t))) \
-	  (load \"$(CURDIR)/test/el-prisma-e2e-live.el\") \
-	  (el-prisma-e2e-live-run))"
+	@echo "Live tests removed. Use 'make test-e2e' for fixture tests."
 
 check-autoloads:
 	@echo "Generating and loading autoloads..."

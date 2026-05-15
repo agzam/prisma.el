@@ -150,15 +150,5 @@ Standard keys :start :end :source-format :children are handled automatically."
 (el-prisma-model--define-node linebreak nil)
 (el-prisma-model--define-node strike nil)
 
-;;;; Data node constructors
-
-(el-prisma-model--define-node map nil)
-(el-prisma-model--define-node array nil)
-(el-prisma-model--define-node string (:value))
-(el-prisma-model--define-node number (:value))
-(el-prisma-model--define-node boolean (:value))
-(el-prisma-model--define-node null nil)
-(el-prisma-model--define-node map-entry (:key :value))
-
 (provide 'el-prisma-model)
 ;;; el-prisma-model.el ends here

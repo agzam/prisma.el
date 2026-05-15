@@ -5,31 +5,13 @@
 ;;
 ;;; Commentary:
 ;; Org format parser and renderer for the intermediary model.
-;; Block structure parsed with regex; inline content parsed with PEG.
+;; Block structure parsed with regex; inline content parsed with
+;; hand-written recursive descent respecting Org emphasis rules.
 ;;
 ;;; Code:
 
 (require 'cl-lib)
 (require 'el-prisma-model)
-(require 'el-prisma-peg)
-
-;;;; Inline PEG grammar
-
-(defvar el-prisma-org--inline-grammar
-  (el-prisma-peg-compile
-   '((inline    (+ (/ bold italic verbatim code strike link text-char)))
-     (bold      (seq "*" (+ (seq (! "*") any)) "*"))
-     (italic    (seq "/" (+ (seq (! "/") any)) "/"))
-     (code      (seq "~" (+ (seq (! "~") any)) "~"))
-     (verbatim  (seq "=" (+ (seq (! "=") any)) "="))
-     (strike    (seq "+" (+ (seq (! "+") any)) "+"))
-     (link      (/ bracket-link-desc bracket-link-plain))
-     (bracket-link-desc  (seq "[[" link-target "][" link-desc "]]"))
-     (bracket-link-plain (seq "[[" link-target "]]"))
-     (link-target (+ (seq (! "]") any)))
-     (link-desc  (+ (seq (! "]") any)))
-     (text-char  any)))
-  "Compiled PEG grammar for Org inline content.")
 
 ;;;; Inline parser
 
@@ -248,6 +230,12 @@ Returns (node . end-pos) or nil."
   (let* ((lines (split-string text "\n"))
          (blocks (el-prisma-org--parse-blocks lines 0))
          (len (length text)))
+    ;; Clamp children end positions - the line-based parser may
+    ;; overshoot by 1 on the last block (counting a \n that isn't there)
+    (dolist (block blocks)
+      (when (and (el-prisma-model-end block)
+                 (> (el-prisma-model-end block) len))
+        (plist-put block :end len)))
     (el-prisma-model-document
      :start 0 :end len
      :source-format 'org
@@ -336,9 +324,7 @@ Returns (node . end-pos) or nil."
                   (push bline inner-lines)
                   (setq cur-pos (+ cur-pos (length bline) 1))
                   (setq i (1+ i)))))
-            (let* ((inner-text (mapconcat #'identity
-                                          (nreverse inner-lines) "\n"))
-                   (inner-blocks (el-prisma-org--parse-blocks
+            (let* ((inner-blocks (el-prisma-org--parse-blocks
                                   (nreverse inner-lines)
                                   (+ block-start (length line) 1))))
               (push (el-prisma-model-blockquote

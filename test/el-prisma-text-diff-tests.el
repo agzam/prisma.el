@@ -1,11 +1,10 @@
-;;; el-prisma-text-diff-tests.el --- Tests for text-diff commit pipeline -*- lexical-binding: t; no-byte-compile: t; -*-
+;;; el-prisma-text-diff-tests.el --- Tests for commit pipeline primitives -*- lexical-binding: t; no-byte-compile: t; -*-
 ;;
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
 ;;; Commentary:
-;; Unit tests for the text-diff primitives: render-with-map,
-;; text-diff-changed-lines, lines-to-byte-range, find-changed-nodes,
-;; merge-adjacent-nodes, and build-patch-ops.
+;; Unit tests for render-with-map and the unified commit primitives:
+;; scan-property-intervals, match-nodes, build-unified-replacement.
 ;;
 ;;; Code:
 
@@ -146,305 +145,289 @@
       (expect (length rmap) :to-equal 1)
       (expect (nth 0 (car rmap)) :to-equal 0))))
 
-;;;; text-diff-changed-lines
+;;;; scan-property-intervals
 
-(describe "el-prisma--text-diff-changed-lines"
+(describe "el-prisma--scan-property-intervals"
 
-  (it "detects no changes for identical text"
-    (let ((text "line one\nline two\nline three"))
-      (expect (el-prisma--text-diff-changed-lines text text) :to-equal nil)))
+  (it "returns segments for a propertized buffer"
+    (with-temp-buffer
+      (insert "AAABBBCCC")
+      (put-text-property 1 4 'el-prisma-node-idx 0)
+      (put-text-property 4 7 'el-prisma-node-idx 1)
+      (put-text-property 7 10 'el-prisma-node-idx 2)
+      (let ((segs (el-prisma--scan-property-intervals)))
+        (expect (length segs) :to-equal 3)
+        ;; Each segment has the correct idx
+        (expect (nth 2 (nth 0 segs)) :to-equal 0)
+        (expect (nth 2 (nth 1 segs)) :to-equal 1)
+        (expect (nth 2 (nth 2 segs)) :to-equal 2))))
 
-  (it "detects single changed line"
-    (expect (el-prisma--text-diff-changed-lines
-             "aaa\nbbb\nccc"
-             "aaa\nBBB\nccc")
-            :to-equal '(1)))
+  (it "detects nil-property gaps between nodes"
+    (with-temp-buffer
+      (insert "AAA--BBB")
+      (put-text-property 1 4 'el-prisma-node-idx 0)
+      ;; positions 4-6 have no property (the "--" gap)
+      (put-text-property 6 9 'el-prisma-node-idx 1)
+      (let ((segs (el-prisma--scan-property-intervals)))
+        (expect (length segs) :to-equal 3)
+        (expect (nth 2 (nth 0 segs)) :to-equal 0)
+        (expect (nth 2 (nth 1 segs)) :to-be nil)
+        (expect (nth 2 (nth 2 segs)) :to-equal 1))))
 
-  (it "detects multiple changed lines"
-    (expect (el-prisma--text-diff-changed-lines
-             "aaa\nbbb\nccc\nddd"
-             "AAA\nbbb\nCCC\nddd")
-            :to-equal '(0 2)))
+  (it "handles buffer with no properties"
+    (with-temp-buffer
+      (insert "plain text")
+      (let ((segs (el-prisma--scan-property-intervals)))
+        (expect (length segs) :to-equal 1)
+        (expect (nth 2 (car segs)) :to-be nil)))))
 
-  (it "detects added lines at end"
-    (expect (el-prisma--text-diff-changed-lines
-             "aaa\nbbb"
-             "aaa\nbbb\nccc")
-            :to-equal '(2)))
+;;;; match-nodes
 
-  (it "detects removed lines at end"
-    (expect (el-prisma--text-diff-changed-lines
-             "aaa\nbbb\nccc"
-             "aaa\nbbb")
-            :to-equal '(2)))
+(describe "el-prisma--match-nodes"
 
-  (it "detects both changed and added lines"
-    (expect (el-prisma--text-diff-changed-lines
-             "aaa\nbbb"
-             "AAA\nbbb\nccc\nddd")
-            :to-equal '(0 2 3)))
+  (it "matches nodes with single-idx property regions"
+    (with-temp-buffer
+      (insert "AAABBB")
+      (put-text-property 1 4 'el-prisma-node-idx 0)
+      (put-text-property 4 7 'el-prisma-node-idx 1)
+      (let* ((segs (el-prisma--scan-property-intervals))
+             ;; Simulate two AST nodes covering the same ranges (0-based string)
+             (children (list (list :type 'paragraph :start 0 :end 3)
+                             (list :type 'paragraph :start 3 :end 6)))
+             (matches (el-prisma--match-nodes children "AAABBB" segs)))
+        (expect (aref matches 0) :to-equal 0)
+        (expect (aref matches 1) :to-equal 1))))
 
-  (it "handles empty strings"
-    (expect (el-prisma--text-diff-changed-lines "" "") :to-equal nil))
+  (it "returns nil for nodes in nil-property regions"
+    (with-temp-buffer
+      (insert "AAANEWNEWBBB")
+      (put-text-property 1 4 'el-prisma-node-idx 0)
+      ;; 4-10 is new text with no property
+      (put-text-property 10 13 'el-prisma-node-idx 1)
+      (let* ((segs (el-prisma--scan-property-intervals))
+             (children (list (list :type 'paragraph :start 0 :end 3)
+                             (list :type 'paragraph :start 3 :end 9)
+                             (list :type 'paragraph :start 9 :end 12)))
+             (matches (el-prisma--match-nodes children "AAANEWNEWBBB" segs)))
+        (expect (aref matches 0) :to-equal 0)
+        (expect (aref matches 1) :to-be nil) ; new content
+        (expect (aref matches 2) :to-equal 1))))
 
-  (it "handles entirely different text"
-    (expect (el-prisma--text-diff-changed-lines
-             "aaa\nbbb" "xxx\nyyy")
-            :to-equal '(0 1))))
+  (it "resolves conflicts when multiple nodes claim same old-idx"
+    (with-temp-buffer
+      (insert "AAABBB")
+      ;; Both regions have the same node-idx (simulating a split)
+      (put-text-property 1 4 'el-prisma-node-idx 0)
+      (put-text-property 4 7 'el-prisma-node-idx 0)
+      (let* ((segs (el-prisma--scan-property-intervals))
+             (children (list (list :type 'paragraph :start 0 :end 3)
+                             (list :type 'paragraph :start 3 :end 6)))
+             (matches (el-prisma--match-nodes children "AAABBB" segs)))
+        ;; Both should be nil (conflict)
+        (expect (aref matches 0) :to-be nil)
+        (expect (aref matches 1) :to-be nil))))
 
-;;;; lines-to-byte-range
+  (it "handles mixed property regions within a node"
+    (with-temp-buffer
+      (insert "AAABBB")
+      (put-text-property 1 3 'el-prisma-node-idx 0)
+      (put-text-property 3 5 'el-prisma-node-idx 1)
+      (put-text-property 5 7 'el-prisma-node-idx 2)
+      (let* ((segs (el-prisma--scan-property-intervals))
+             ;; One node spanning across properties 0 and 1
+             (children (list (list :type 'paragraph :start 0 :end 4)
+                             (list :type 'paragraph :start 4 :end 6)))
+             (matches (el-prisma--match-nodes children "AAABBB" segs)))
+        ;; First node has mixed properties -> nil
+        (expect (aref matches 0) :to-be nil)
+        (expect (aref matches 1) :to-equal 2)))))
 
-(describe "el-prisma--lines-to-byte-range"
+;;;; build-unified-replacement
 
-  (it "returns nil for empty indices"
-    (expect (el-prisma--lines-to-byte-range "aaa\nbbb" nil) :to-be nil))
+(describe "el-prisma--build-unified-replacement"
 
-  (it "returns byte range for single line"
-    ;; "aaa\nbbb\nccc" -> line 1 = "bbb" at bytes 4..7 (plus newline = 8)
-    (let ((range (el-prisma--lines-to-byte-range "aaa\nbbb\nccc" '(1))))
-      (expect (car range) :to-equal 4)
-      (expect (cdr range) :to-equal 8)))
+  (it "uses original source bytes for unchanged nodes"
+    (let* ((children (list (list :type 'heading :start 0 :end 7)
+                           (list :type 'paragraph :start 9 :end 19)))
+           (mirror-text "* Title\n\nBody text.")
+           (matches (vector 0 1))
+           ;; Original source/mirror texts for the 2 nodes
+           (source-texts (vector "# Title" "Body text."))
+           (mirror-texts (vector "* Title" "Body text."))
+           (result (el-prisma--build-unified-replacement
+                    children mirror-text matches
+                    source-texts mirror-texts 'markdown 'org)))
+      ;; Both unchanged -> uses original source bytes joined with \n\n
+      (expect result :to-equal "# Title\n\nBody text.")))
 
-  (it "returns byte range for first line"
-    (let ((range (el-prisma--lines-to-byte-range "aaa\nbbb\nccc" '(0))))
-      (expect (car range) :to-equal 0)
-      (expect (cdr range) :to-equal 4)))
+  (it "re-renders changed nodes while preserving unchanged ones"
+    (let* ((children (list (list :type 'heading :start 0 :end 7)
+                           (list :type 'paragraph :start 9 :end 19)))
+           (mirror-text "* Title\n\nNew text!!")
+           (matches (vector 0 1))
+           (source-texts (vector "# Title" "Body text."))
+           (mirror-texts (vector "* Title" "Body text."))
+           (result (el-prisma--build-unified-replacement
+                    children mirror-text matches
+                    source-texts mirror-texts 'markdown 'org)))
+      ;; Heading unchanged (original source), paragraph re-rendered
+      (expect result :to-match "^# Title\n\n")
+      (expect result :to-match "New text!!")))
 
-  (it "returns byte range spanning multiple lines"
-    ;; lines 0 and 2 -> should cover from start of line 0 to end of line 2
-    (let ((range (el-prisma--lines-to-byte-range "aaa\nbbb\nccc" '(0 2))))
-      (expect (car range) :to-equal 0)
-      ;; End of line 2: "ccc" is 3 chars at offset 8, so 8+3+1=12, but
-      ;; clamped to text length 11
-      (expect (cdr range) :to-equal 11)))
+  (it "handles unmatched (new) nodes"
+    (let* ((children (list (list :type 'heading :start 0 :end 7)
+                           (list :type 'paragraph :start 9 :end 22)
+                           (list :type 'paragraph :start 24 :end 34)))
+           (mirror-text "* Title\n\nNew paragraph\n\nBody text.")
+           (matches (vector 0 nil 1))
+           (source-texts (vector "# Title" "Body text."))
+           (mirror-texts (vector "* Title" "Body text."))
+           (result (el-prisma--build-unified-replacement
+                    children mirror-text matches
+                    source-texts mirror-texts 'markdown 'org)))
+      ;; Heading and last paragraph from source, middle is new
+      (expect result :to-match "^# Title")
+      (expect result :to-match "New paragraph")
+      (expect result :to-match "Body text\\.$"))))
 
-  (it "returns range for last line"
-    ;; "aaa\nbbb" = 7 chars, line 1 starts at 4
-    (let ((range (el-prisma--lines-to-byte-range "aaa\nbbb" '(1))))
-      (expect (car range) :to-equal 4)
-      ;; 4 + 3 + 1 = 8, clamped to 7
-      (expect (cdr range) :to-equal 7)))
+;;;; el-prisma--same-structure-p
 
-  (it "handles single-line text"
-    (let ((range (el-prisma--lines-to-byte-range "hello" '(0))))
-      (expect (car range) :to-equal 0)
-      (expect (cdr range) :to-equal 5))))
+(describe "el-prisma--same-structure-p"
 
-;;;; byte-pos-to-line
+  (it "returns t for identity mapping [0 1 2] with n=3"
+    (expect (el-prisma--same-structure-p (vector 0 1 2) 3)
+            :to-be-truthy))
 
-(describe "el-prisma--byte-pos-to-line"
+  (it "returns nil when a match is nil"
+    (expect (el-prisma--same-structure-p (vector 0 nil 2) 3)
+            :not :to-be-truthy))
 
-  (it "returns 0 for position in first line"
-    (expect (el-prisma--byte-pos-to-line "aaa\nbbb\nccc" 2) :to-equal 0))
+  (it "returns nil for reordered matches [1 0 2]"
+    (expect (el-prisma--same-structure-p (vector 1 0 2) 3)
+            :not :to-be-truthy))
 
-  (it "returns 1 for position in second line"
-    (expect (el-prisma--byte-pos-to-line "aaa\nbbb\nccc" 5) :to-equal 1))
+  (it "returns nil when length mismatches num-old-nodes"
+    (expect (el-prisma--same-structure-p (vector 0 1) 3)
+            :not :to-be-truthy)
+    (expect (el-prisma--same-structure-p (vector 0 1 2 3) 3)
+            :not :to-be-truthy))
 
-  (it "returns 2 for position in third line"
-    (expect (el-prisma--byte-pos-to-line "aaa\nbbb\nccc" 9) :to-equal 2))
+  (it "returns t for empty matches with n=0"
+    (expect (el-prisma--same-structure-p (vector) 0)
+            :to-be-truthy)))
 
-  (it "returns 0 for position 0"
-    (expect (el-prisma--byte-pos-to-line "aaa\nbbb" 0) :to-equal 0))
+;;;; el-prisma--patch-in-place
 
-  (it "counts newline at exact newline position"
-    ;; Position 3 is the newline itself in "aaa\nbbb"
-    (expect (el-prisma--byte-pos-to-line "aaa\nbbb" 3) :to-equal 0)))
+(describe "el-prisma--patch-in-place"
 
-;;;; extract-lines
+  (it "returns source-text unchanged when no node text differs"
+    (let* ((src "Hello world.")
+           (src-node (list :type 'paragraph :start 0 :end 12))
+           (render-map (list (list 0 src-node 0 12)))
+           (matches (vector 0))
+           (new-child (list :type 'paragraph :start 0 :end 12))
+           (mirror "Hello world.")
+           (mirror-texts (vector "Hello world.")))
+      (expect (el-prisma--patch-in-place
+               src render-map matches
+               (list new-child) mirror
+               mirror-texts 'markdown 'org)
+              :to-equal src)))
 
-(describe "el-prisma--extract-lines"
+  (it "patches only the changed node, preserving surrounding bytes"
+    ;; Source: two nodes separated by triple newline
+    (let* ((src "# First\n\n\nSecond para.")
+           (node0 (list :type 'heading :start 0 :end 7))
+           (node1 (list :type 'paragraph :start 10 :end 22))
+           (render-map (list (list 0 node0 0 9)
+                             (list 1 node1 11 23)))
+           (matches (vector 0 1))
+           ;; Mirror: node0 unchanged, node1 edited
+           (mirror "* First\n\nChanged para.")
+           (new0 (list :type 'heading :start 0 :end 7))
+           (new1 (list :type 'paragraph :start 9 :end 22))
+           (mirror-texts (vector "* First" "Second para."))
+           (result (el-prisma--patch-in-place
+                    src render-map matches
+                    (list new0 new1) mirror
+                    mirror-texts 'markdown 'org)))
+      ;; Prefix up to node1 (including triple newline) preserved
+      (expect (substring result 0 10) :to-equal "# First\n\n\n")
+      ;; Changed node replaced
+      (expect result :to-match "Changed para\\.")
+      ;; Overall: only the node1 range changed
+      (expect (substring result 0 (length "# First\n\n\n"))
+              :to-equal (substring src 0 (length "# First\n\n\n")))))
 
-  (it "extracts single line"
-    (expect (el-prisma--extract-lines "aaa\nbbb\nccc" 1 1)
-            :to-equal "bbb"))
+  (it "preserves varied whitespace in multi-node document"
+    ;; Source: "# Title\n\nIntro.\n\n\n## Sec1\n\nBody1.\n\n\n\n## Sec2\n\nBody2."
+    ;; Offsets: # Title=0..7, \n\n, Intro.=9..15, \n\n\n,
+    ;;          ## Sec1=18..25, \n\n, Body1.=27..33, \n\n\n\n,
+    ;;          ## Sec2=37..44, \n\n, Body2.=46..52
+    ;; Edit "Body1." -> "CHANGED." in node3
+    (let* ((src "# Title\n\nIntro.\n\n\n## Sec1\n\nBody1.\n\n\n\n## Sec2\n\nBody2.")
+           (n0 (list :type 'h :start 0 :end 7))
+           (n1 (list :type 'p :start 9 :end 15))
+           (n2 (list :type 'h :start 18 :end 25))
+           (n3 (list :type 'p :start 27 :end 33))
+           (n4 (list :type 'h :start 37 :end 44))
+           (n5 (list :type 'p :start 46 :end 52))
+           (rmap (list (list 0 n0 0 7) (list 1 n1 9 15)
+                       (list 2 n2 17 24) (list 3 n3 26 32)
+                       (list 4 n4 34 41) (list 5 n5 43 49)))
+           (matches (vector 0 1 2 3 4 5))
+           ;; Mirror: "* Title\n\nIntro.\n\n** Sec1\n\nCHANGED.\n\n** Sec2\n\nBody2."
+           ;; Offsets: * Title=0..7, \n\n, Intro.=9..15, \n\n,
+           ;;          ** Sec1=17..24, \n\n, CHANGED.=26..34, \n\n,
+           ;;          ** Sec2=36..43, \n\n, Body2.=45..51
+           (mirror "* Title\n\nIntro.\n\n** Sec1\n\nCHANGED.\n\n** Sec2\n\nBody2.")
+           (m0 (list :type 'h :start 0 :end 7))
+           (m1 (list :type 'p :start 9 :end 15))
+           (m2 (list :type 'h :start 17 :end 24))
+           (m3 (list :type 'p :start 26 :end 34))
+           (m4 (list :type 'h :start 36 :end 43))
+           (m5 (list :type 'p :start 45 :end 51))
+           (mtexts (vector "* Title" "Intro." "** Sec1" "Body1." "** Sec2" "Body2."))
+           (result (el-prisma--patch-in-place
+                    src rmap matches
+                    (list m0 m1 m2 m3 m4 m5) mirror
+                    mtexts 'markdown 'org)))
+      ;; Same line count (CHANGED. has no newlines, same as Body1.)
+      (expect (length (split-string result "\n"))
+              :to-equal (length (split-string src "\n")))
+      ;; Everything before the changed node byte-identical
+      (expect (substring result 0 27) :to-equal (substring src 0 27))
+      ;; Everything after the changed node byte-identical
+      (let ((suffix-start-src 33)
+            (suffix-start-res (+ 27 (length "CHANGED."))))
+        (expect (substring result suffix-start-res)
+                :to-equal (substring src suffix-start-src)))))
 
-  (it "extracts range of lines"
-    (expect (el-prisma--extract-lines "aaa\nbbb\nccc\nddd" 1 2)
-            :to-equal "bbb\nccc"))
-
-  (it "extracts first line"
-    (expect (el-prisma--extract-lines "aaa\nbbb" 0 0)
-            :to-equal "aaa"))
-
-  (it "extracts all lines"
-    (expect (el-prisma--extract-lines "aaa\nbbb\nccc" 0 2)
-            :to-equal "aaa\nbbb\nccc"))
-
-  (it "clamps to available lines"
-    (expect (el-prisma--extract-lines "aaa\nbbb" 0 5)
-            :to-equal "aaa\nbbb")))
-
-;;;; find-changed-nodes
-
-(describe "el-prisma--find-changed-nodes"
-
-  (it "returns nil for identical text"
-    (let* ((render-map '((0 (:type heading :start 0 :end 8) 0 8)
-                         (1 (:type paragraph :start 10 :end 20) 10 22)))
-           (mirror "* Title\n\nBody text."))
-      (expect (el-prisma--find-changed-nodes mirror mirror render-map)
-              :to-be nil)))
-
-  (it "identifies single changed node"
-    (let* ((h-node (el-prisma-model-heading
-                    :level 1
-                    :children (list (el-prisma-model-text :value "Title"))
-                    :start 0 :end 8))
-           (p-node (el-prisma-model-paragraph
-                    :children (list (el-prisma-model-text :value "Old text."))
-                    :start 10 :end 20))
-           (render-map (list (list 0 h-node 0 8)
-                             (list 1 p-node 10 22)))
-           (old-mirror "* Title\n\nOld text.")
-           (new-mirror "* Title\n\nNew text."))
-      (let ((result (el-prisma--find-changed-nodes
-                     old-mirror new-mirror render-map)))
-        (expect (length result) :to-equal 1)
-        ;; Changed node is the paragraph
-        (expect (el-prisma-model-type (caar result)) :to-equal 'paragraph))))
-
-  (it "identifies multiple changed nodes"
-    (let* ((h-node (el-prisma-model-heading
-                    :level 1
-                    :children (list (el-prisma-model-text :value "Old"))
-                    :start 0 :end 6))
-           (p-node (el-prisma-model-paragraph
-                    :children (list (el-prisma-model-text :value "Old body."))
-                    :start 8 :end 17))
-           (render-map (list (list 0 h-node 0 6)
-                             (list 1 p-node 8 17)))
-           (old-mirror "* Old\n\nOld body.")
-           (new-mirror "* New\n\nNew body."))
-      (let ((result (el-prisma--find-changed-nodes
-                     old-mirror new-mirror render-map)))
-        (expect (length result) :to-equal 2))))
-
-  (it "extracts correct edited text for changed node"
-    (let* ((h-node (el-prisma-model-heading
-                    :level 1
-                    :children (list (el-prisma-model-text :value "Title"))
-                    :start 0 :end 8))
-           (p-node (el-prisma-model-paragraph
-                    :children (list (el-prisma-model-text :value "Old word."))
-                    :start 10 :end 20))
-           (render-map (list (list 0 h-node 0 8)
-                             (list 1 p-node 10 22)))
-           (old-mirror "* Title\n\nOld word.")
-           (new-mirror "* Title\n\nNew word."))
-      (let ((result (el-prisma--find-changed-nodes
-                     old-mirror new-mirror render-map)))
-        ;; Extracted text should be from the new mirror
-        (expect (cadr (car result)) :to-match "New word"))))
-
-  (it "handles edit in first node"
-    (let* ((h-node (el-prisma-model-heading
-                    :level 1
-                    :children (list (el-prisma-model-text :value "Old"))
-                    :start 0 :end 6))
-           (p-node (el-prisma-model-paragraph
-                    :children (list (el-prisma-model-text :value "Keep."))
-                    :start 8 :end 13))
-           (render-map (list (list 0 h-node 0 6)
-                             (list 1 p-node 8 13)))
-           (old-mirror "* Old\n\nKeep.")
-           (new-mirror "* New\n\nKeep."))
-      (let ((result (el-prisma--find-changed-nodes
-                     old-mirror new-mirror render-map)))
-        (expect (length result) :to-equal 1)
-        (expect (el-prisma-model-type (caar result)) :to-equal 'heading)))))
-
-;;;; merge-adjacent-nodes
-
-(describe "el-prisma--merge-adjacent-nodes"
-
-  (it "returns nil for nil input"
-    (expect (el-prisma--merge-adjacent-nodes nil) :to-be nil))
-
-  (it "returns single group for single node"
-    (let* ((node (el-prisma-model-paragraph
-                  :children (list (el-prisma-model-text :value "X"))
-                  :start 10 :end 20))
-           (result (el-prisma--merge-adjacent-nodes
-                    (list (list node "New text")))))
-      (expect (length result) :to-equal 1)
-      (expect (nth 0 (car result)) :to-equal 10)
-      (expect (nth 1 (car result)) :to-equal 20)
-      (expect (nth 2 (car result)) :to-equal "New text")))
-
-  (it "merges adjacent nodes (gap < 4)"
-    (let* ((n1 (el-prisma-model-paragraph :start 0 :end 10))
-           (n2 (el-prisma-model-paragraph :start 12 :end 20))
-           (result (el-prisma--merge-adjacent-nodes
-                    (list (list n1 "Text A") (list n2 "Text B")))))
-      (expect (length result) :to-equal 1)
-      (expect (nth 0 (car result)) :to-equal 0)
-      (expect (nth 1 (car result)) :to-equal 20)
-      (expect (nth 2 (car result)) :to-match "Text A\n\nText B")))
-
-  (it "keeps separate groups for distant nodes"
-    (let* ((n1 (el-prisma-model-paragraph :start 0 :end 10))
-           (n2 (el-prisma-model-paragraph :start 50 :end 60))
-           (result (el-prisma--merge-adjacent-nodes
-                    (list (list n1 "A") (list n2 "B")))))
-      (expect (length result) :to-equal 2)
-      (expect (nth 0 (car result)) :to-equal 0)
-      (expect (nth 0 (cadr result)) :to-equal 50))))
-
-;;;; build-patch-ops integration
-
-(describe "el-prisma--build-patch-ops"
-
-  (it "produces ops from changed nodes"
-    (let* ((node (el-prisma-model-paragraph
-                  :children (list (el-prisma-model-text :value "Old."))
-                  :start 10 :end 14))
-           (changed (list (list node "New paragraph.")))
-           (ops (el-prisma--build-patch-ops changed 'markdown 'org)))
-      (expect (length ops) :to-equal 1)
-      (let ((op (car ops)))
-        (expect (nth 0 op) :to-equal 10)
-        (expect (nth 1 op) :to-equal 14)
-        ;; Replacement should be the MD rendering of parsed Org
-        (expect (stringp (nth 2 op)) :to-be-truthy)))))
-
-;;;; apply-patch-ops
-
-(describe "el-prisma--apply-patch-ops"
-
-  (it "applies single replacement"
-    (let ((result (el-prisma--apply-patch-ops
-                   "aaaBBBccc"
-                   '((3 6 "XXX")))))
-      (expect result :to-equal "aaaXXXccc")))
-
-  (it "applies multiple non-overlapping replacements"
-    (let ((result (el-prisma--apply-patch-ops
-                   "aaaBBBcccDDD"
-                   '((3 6 "XX") (9 12 "YY")))))
-      (expect result :to-equal "aaaXXcccYY")))
-
-  (it "preserves trailing newline from original"
-    (let ((result (el-prisma--apply-patch-ops
-                   "old\n"
-                   '((0 3 "new")))))
-      (expect result :to-equal "new\n")))
-
-  (it "preserves trailing newline count from original range"
-    ;; Range [0,5) = "aaa\n\n" has two trailing newlines
-    (let ((result (el-prisma--apply-patch-ops
-                   "aaa\n\nbbb"
-                   '((0 5 "XXX")))))
-      (expect result :to-equal "XXX\n\nbbb")))
-
-  (it "preserves trailing blank line at end of range"
-    (let ((result (el-prisma--apply-patch-ops
-                   "old content\n\nnext section"
-                   '((0 13 "new content")))))
-      ;; Original "old content\n\n" has \n\n, must preserve it
-      (expect result :to-equal "new content\n\nnext section")))
-
-  (it "returns text unchanged for empty ops"
-    (expect (el-prisma--apply-patch-ops "hello" nil) :to-equal "hello")))
+  (it "applies two patches in reverse order without offset corruption"
+    (let* ((src "# A\n\n\nB text.\n\n\n\nC text.")
+           (n0 (list :type 'h :start 0 :end 3))
+           (n1 (list :type 'p :start 6 :end 13))
+           (n2 (list :type 'p :start 17 :end 24))
+           (rmap (list (list 0 n0 0 3) (list 1 n1 5 14)
+                       (list 2 n2 16 25)))
+           (matches (vector 0 1 2))
+           (mirror "* A\n\nB NEW.\n\nC NEW.")
+           (m0 (list :type 'h :start 0 :end 3))
+           (m1 (list :type 'p :start 5 :end 11))
+           (m2 (list :type 'p :start 13 :end 19))
+           (mtexts (vector "* A" "B text." "C text."))
+           (result (el-prisma--patch-in-place
+                    src rmap matches
+                    (list m0 m1 m2) mirror
+                    mtexts 'markdown 'org)))
+      ;; Prefix preserved
+      (expect (substring result 0 6) :to-equal "# A\n\n\n")
+      ;; Both nodes replaced
+      (expect result :to-match "B NEW\\.")
+      (expect result :to-match "C NEW\\.")
+      ;; Triple and quadruple newlines preserved between blocks
+      (expect result :to-match "\n\n\n[^\n]")
+      (expect result :to-match "\n\n\n\n[^\n]"))))
 
 (provide 'el-prisma-text-diff-tests)
 ;;; el-prisma-text-diff-tests.el ends here

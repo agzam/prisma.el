@@ -29,13 +29,13 @@ Returns AST with 0-based string positions (matching TEXT indices)."
       ;; tree-sitter's 1-based buffer positions during parsing.
       ;; The final AST positions are shifted to 0-based via
       ;; el-prisma-md--shift-positions before returning.
-      (let ((text (concat "\0" buf-text))
-            (ast (el-prisma-model-document
-                  :start 1 :end (1+ (length buf-text))
-                  :source-format 'markdown
-                  :children (el-prisma-md--process-block-children
-                             block-root inline-root
-                             (concat "\0" buf-text)))))
+      (let* ((nul-text (concat "\0" buf-text))
+             (ast (el-prisma-model-document
+                   :start 1 :end (1+ (length buf-text))
+                   :source-format 'markdown
+                   :children (el-prisma-md--process-block-children
+                              block-root inline-root
+                              nul-text))))
         (el-prisma-md--shift-positions ast -1)))))
 
 ;;;; Position normalization
@@ -191,9 +191,18 @@ Returns AST with 0-based string positions (matching TEXT indices)."
          (language (when lang-node (treesit-node-text lang-node t)))
          (content-node (el-prisma-ts-child-by-type
                         node "code_fence_content"))
-         (body (if content-node
-                   (treesit-node-text content-node t)
-                 "")))
+         (raw-body (if content-node
+                       (treesit-node-text content-node t)
+                     ""))
+         ;; Some tree-sitter-markdown versions include the closing
+         ;; fence in the content node. Strip it if present.
+         (body (let ((stripped (replace-regexp-in-string
+                                "\n?[`~]\\{3,\\}\\s-*\\'" "" raw-body)))
+                 ;; Ensure body ends with \n if non-empty
+                 (if (and (not (string-empty-p stripped))
+                          (not (string-suffix-p "\n" stripped)))
+                     (concat stripped "\n")
+                   stripped))))
     (el-prisma-model-code-block
      :language language :body body
      :start start :end end :source-format 'markdown)))

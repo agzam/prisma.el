@@ -113,26 +113,7 @@
           (expect (el-prisma-model-type s) :to-equal 'strong)
           (expect (el-prisma-model-prop
                    (car (el-prisma-model-children s)) :value)
-                  :to-equal "bold"))))
-
-    (describe "data nodes"
-      (it "creates map-entry with :key and :value"
-        (let ((me (el-prisma-model-map-entry
-                   :key (el-prisma-model-string :value "name")
-                   :value (el-prisma-model-string :value "Alice"))))
-          (expect (el-prisma-model-type me) :to-equal 'map-entry)
-          (expect (el-prisma-model-prop
-                   (el-prisma-model-prop me :key) :value)
-                  :to-equal "name")))
-
-      (it "creates null node"
-        (let ((n (el-prisma-model-null)))
-          (expect (el-prisma-model-type n) :to-equal 'null)
-          (expect (el-prisma-model-props n) :to-be nil)))
-
-      (it "creates boolean with :value"
-        (let ((b (el-prisma-model-boolean :value t)))
-          (expect (el-prisma-model-prop b :value) :to-equal t)))))
+                  :to-equal "bold")))))
 
   (describe "content hashing"
     (it "returns a string"
@@ -167,13 +148,13 @@
                 :not :to-equal (el-prisma-model-content-hash p2))))
 
     (it "hashes node-valued props recursively"
-      (let ((me1 (el-prisma-model-map-entry
-                  :key (el-prisma-model-string :value "k")
-                  :value (el-prisma-model-number :value 1)))
-            (me2 (el-prisma-model-map-entry
-                  :key (el-prisma-model-string :value "k")
-                  :value (el-prisma-model-number :value 2))))
-        (expect (el-prisma-model-content-hash me1)
-                :not :to-equal (el-prisma-model-content-hash me2))))))
+      (let ((l1 (el-prisma-model-link
+                 :url "http://example.com"
+                 :children (list (el-prisma-model-text :value "a"))))
+            (l2 (el-prisma-model-link
+                 :url "http://example.com"
+                 :children (list (el-prisma-model-text :value "b")))))
+        (expect (el-prisma-model-content-hash l1)
+                :not :to-equal (el-prisma-model-content-hash l2))))))
 
 ;;; el-prisma-tests.el ends here
