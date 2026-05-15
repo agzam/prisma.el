@@ -387,11 +387,16 @@ Returns list of (START END REPLACEMENT)."
   "Find source nodes affected by changes between OLD-MIRROR and NEW-MIRROR.
 Uses RENDER-MAP to correlate mirror byte ranges to source nodes.
 Returns list of (SOURCE-NODE EDITED-MIRROR-TEXT) for affected nodes.
-Extracts text from NEW-MIRROR using line ranges (stable across edits)."
+When line counts match, extracts per-node using line ranges.
+When line counts differ (insertion/deletion), extracts the full
+affected range from the new mirror using adjusted coordinates."
   (let* ((changed-lines (el-prisma--text-diff-changed-lines
                          old-mirror new-mirror))
          (changed-range (el-prisma--lines-to-byte-range
-                         old-mirror changed-lines)))
+                         old-mirror changed-lines))
+         (len-delta (- (length new-mirror) (length old-mirror)))
+         (line-count-same (= (length (split-string old-mirror "\n"))
+                             (length (split-string new-mirror "\n")))))
     (when changed-range
       (let ((cstart (car changed-range))
             (cend (cdr changed-range))
@@ -401,14 +406,34 @@ Extracts text from NEW-MIRROR using line ranges (stable across edits)."
                 (mend (nth 3 entry))
                 (src-node (nth 1 entry)))
             (when (and (< mstart cend) (> mend cstart))
-              ;; Map byte range to line range (stable across edits)
-              (let* ((start-line (el-prisma--byte-pos-to-line
-                                  old-mirror mstart))
-                     (end-line (el-prisma--byte-pos-to-line
-                                old-mirror (1- mend)))
-                     (extracted (el-prisma--extract-lines
-                                 new-mirror start-line end-line)))
-                (push (list src-node extracted) result)))))
+              (let ((extracted
+                     (if line-count-same
+                         ;; Same line count: per-node line extraction (safe)
+                         (let ((start-line (el-prisma--byte-pos-to-line
+                                           old-mirror mstart))
+                               (end-line (el-prisma--byte-pos-to-line
+                                          old-mirror (1- mend))))
+                           (el-prisma--extract-lines
+                            new-mirror start-line end-line))
+                       ;; Different line count: adjust byte positions.
+                       ;; Nodes starting before the change keep their start;
+                       ;; nodes starting at/after the change shift by delta.
+                       (let* ((change-point (car changed-range))
+                              (new-start (if (< mstart change-point)
+                                             mstart
+                                           (min (+ mstart len-delta)
+                                                (length new-mirror))))
+                              (new-end (min (+ mend len-delta)
+                                            (length new-mirror))))
+                         (when (< new-start new-end)
+                           (substring new-mirror new-start new-end))))))
+                ;; Only include if text actually differs from original
+                (let ((orig (when (<= mend (length old-mirror))
+                              (substring old-mirror mstart mend))))
+                  (when (and extracted
+                             (or (null orig)
+                                 (not (string= extracted orig))))
+                    (push (list src-node extracted) result)))))))
         (nreverse result)))))
 
 (defun el-prisma--merge-adjacent-nodes (changed-nodes)
