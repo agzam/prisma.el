@@ -872,5 +872,217 @@ Returns the patched source string."
       (expect result :to-match "keepCode()")
       (expect result :to-match "\\*THAT\\*"))))
 
+;;;; Comprehensive test matrix (STRATEGY.md)
+
+(defconst el-prisma-e2e--complex-fixture
+  (concat
+   "# Project Name\n\n"
+   "Short intro with **bold**, *italic*, `code`, and ~~strike~~.\n\n"
+   "## Installation\n\n"
+   "Install via [npm](https://npmjs.com/package/foo):\n\n"
+   "```bash\nnpm install foo\n```\n\n"
+   "Or build from source:\n\n"
+   "```bash\ngit clone https://github.com/example/foo\ncd foo && make install\n```\n\n"
+   "## Configuration\n\n"
+   "### Step 1: Create credentials\n\n"
+   "1. Go to https://example.com/console\n"
+   "2. Click \"New App\"\n"
+   "3. Choose \"OAuth\"\n\n"
+   "### Step 2: Add permissions\n\n"
+   "Required scopes:\n"
+   "- `read:data` - Read access\n"
+   "- `write:data` - Write access\n\n"
+   "### Step 3: Set environment\n\n"
+   "```bash\nexport APP_ID=\"your-id\"\nexport APP_SECRET=\"your-secret\"\n```\n\n"
+   "## Usage\n\n"
+   "### Basic usage\n\n"
+   "Run the tool:\n\n"
+   "```bash\nfoo run\n```\n\n"
+   "### Advanced usage\n\n"
+   "Pass a config file:\n\n"
+   "```bash\nfoo run --config path/to/config.yaml\n```\n\n"
+   "## Architecture\n\n"
+   "| Component | Purpose |\n"
+   "|-----------|----------|\n"
+   "| Parser | Parse input |\n"
+   "| Renderer | Generate output |\n\n"
+   "> Note: The renderer is experimental.\n\n"
+   "---\n\n"
+   "## Troubleshooting\n\n"
+   "### \"Missing credentials\"\n"
+   "Set APP_ID and APP_SECRET.\n\n"
+   "### \"Connection failed\"\n"
+   "- Check network\n"
+   "- Verify endpoint URL\n\n"
+   "## Resources\n\n"
+   "- [Docs](https://docs.example.com)\n"
+   "- [API](https://api.example.com)\n\n"
+   "## License\n\nMIT\n")
+  "Complex GFM fixture for comprehensive testing.")
+
+(defun el-prisma-e2e--check-invariants (original result)
+  "Check structural invariants between ORIGINAL and RESULT."
+  ;; Blank lines before ## and ### headings
+  (let ((headings (with-temp-buffer
+                    (insert result)
+                    (goto-char (point-min))
+                    (let (found)
+                      (while (re-search-forward "^##+ " nil t)
+                        (unless (= (line-number-at-pos) 1)
+                          (push (buffer-substring
+                                 (line-beginning-position)
+                                 (line-end-position))
+                                found)))
+                      (nreverse found)))))
+    (dolist (h headings)
+      (expect (string-match-p (concat "\n\n" (regexp-quote h)) result)
+              :to-be-truthy)))
+  ;; Code fences preserved
+  (let ((orig-fences (cl-count-if (lambda (l) (string-prefix-p "```" l))
+                                  (split-string original "\n")))
+        (res-fences (cl-count-if (lambda (l) (string-prefix-p "```" l))
+                                 (split-string result "\n"))))
+    (expect res-fences :to-equal orig-fences))
+  ;; Line count within tolerance (rearrangement may add/remove blank lines)
+  (let ((orig-lines (length (split-string original "\n")))
+        (res-lines (length (split-string result "\n"))))
+    (expect (abs (- res-lines orig-lines)) :to-be-less-than 15)))
+
+(describe "E2E: comprehensive test matrix"
+  (after-each (el-prisma-e2e--cleanup))
+
+  (describe "Group B: rearrangements"
+
+    (it "B1: org-metaup on ### Step 2"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "*** Step 2")
+          (beginning-of-line)
+          (org-metaup)
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          ;; Step 2 before Step 1
+          (expect (string-match "### Step 2" result)
+                  :to-be-less-than (string-match "### Step 1" result))
+          ;; All content present
+          (expect result :to-match "read:data")
+          (expect result :to-match "https://example.com/console")
+          (expect result :to-match "### Step 3")
+          (el-prisma-e2e--check-invariants md result))))
+
+    (it "B4: org-metaup on ** Usage"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "** Usage")
+          (beginning-of-line)
+          (org-metaup)
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          ;; Usage before Configuration
+          (expect (string-match "## Usage" result)
+                  :to-be-less-than (string-match "## Configuration" result))
+          ;; Sub-sections intact
+          (expect result :to-match "### Basic usage")
+          (expect result :to-match "### Advanced usage")
+          (expect result :to-match "foo run --config")
+          (el-prisma-e2e--check-invariants md result))))
+
+    (it "B5: org-metaup on ** Troubleshooting"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (goto-char (point-min))
+          (search-forward "** Troubleshooting")
+          (beginning-of-line)
+          (org-metaup)
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          ;; Troubleshooting before Architecture
+          (expect (string-match "## Troubleshooting" result)
+                  :to-be-less-than (string-match "## Architecture" result))
+          ;; Table and blockquote intact
+          (expect result :to-match "| Component")
+          (expect result :to-match "experimental")
+          (el-prisma-e2e--check-invariants md result)))))
+
+  (describe "Group C: baseline"
+
+    (it "C1: no-edit commit is byte-identical"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (expect (with-current-buffer src (buffer-string)) :to-equal md))))
+
+  (describe "Group D: multi-operation"
+
+    (it "D3: org-metaup + edit word in different section"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             (mirror (with-current-buffer src (el-prisma-convert))))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          ;; Rearrange: move Step 2 up
+          (goto-char (point-min))
+          (search-forward "*** Step 2")
+          (beginning-of-line)
+          (org-metaup)
+          ;; Also edit a word in Step 3
+          (goto-char (point-min))
+          (search-forward "APP_ID")
+          (replace-match "MY_APP_ID")
+          (let ((el-prisma--skip-kill-confirm t)) (el-prisma-commit)))
+        (let ((result (with-current-buffer src (buffer-string))))
+          ;; Rearrangement applied
+          (expect (string-match "### Step 2" result)
+                  :to-be-less-than (string-match "### Step 1" result))
+          ;; Edit applied
+          (expect result :to-match "MY_APP_ID")
+          (el-prisma-e2e--check-invariants md result)))))
+
+  (describe "Group F: cursor position"
+
+    (it "F1: cursor on ## Configuration lands on ** Configuration"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             mirror)
+        (with-current-buffer src
+          (goto-char (point-min))
+          (search-forward "## Configuration")
+          (beginning-of-line)
+          (setq mirror (el-prisma-convert)))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (expect (buffer-substring (line-beginning-position)
+                                    (line-end-position))
+                  :to-match "Configuration"))))
+
+    (it "F3: cursor on ## Usage after code blocks lands correctly"
+      (let* ((md el-prisma-e2e--complex-fixture)
+             (src (el-prisma-e2e--make-md-buffer "matrix.md" md))
+             mirror)
+        (with-current-buffer src
+          (goto-char (point-min))
+          (search-forward "## Usage")
+          (beginning-of-line)
+          (setq mirror (el-prisma-convert)))
+        (push mirror el-prisma-e2e--buffers)
+        (with-current-buffer mirror
+          (expect (buffer-substring (line-beginning-position)
+                                    (line-end-position))
+                  :to-match "Usage"))))))
+
 (provide 'el-prisma-e2e-tests)
 ;;; el-prisma-e2e-tests.el ends here

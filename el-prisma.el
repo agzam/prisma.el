@@ -218,6 +218,152 @@ Returns the minimal byte range covering all listed lines."
       (when (and start end)
         (cons start (min end (length text)))))))
 
+;;;; Property-based changed node detection
+
+(defun el-prisma--find-changed-nodes-by-props (mirror-buf old-mirror render-map)
+  "Find changed nodes by reading `el-prisma-node-idx' text properties.
+Properties are set during convert and travel with text through
+kill/yank and org-metaup/down. Compares each tagged region's current
+text against original text from OLD-MIRROR. Returns list of
+\(SOURCE-NODE CURRENT-MIRROR-TEXT) for nodes whose text changed."
+  (let ((idx-to-node (make-hash-table :test 'eql))
+        (idx-to-orig (make-hash-table :test 'eql))
+        (result nil))
+    (dolist (entry render-map)
+      (let ((idx (nth 0 entry))
+            (src-node (nth 1 entry))
+            (mstart (nth 2 entry))
+            (mend (nth 3 entry)))
+        (puthash idx src-node idx-to-node)
+        (puthash idx (substring old-mirror mstart mend) idx-to-orig)))
+    (with-current-buffer mirror-buf
+      (let ((pos (point-min))
+            (seen (make-hash-table :test 'eql)))
+        (while (< pos (point-max))
+          (let ((idx (get-text-property pos 'el-prisma-node-idx))
+                (next (or (next-single-property-change
+                           pos 'el-prisma-node-idx)
+                          (point-max))))
+            (when (and idx (not (gethash idx seen)))
+              (puthash idx t seen)
+              (let ((text (el-prisma--collect-prop-text
+                           mirror-buf idx))
+                    (orig (gethash idx idx-to-orig))
+                    (src-node (gethash idx idx-to-node)))
+                (when (and orig src-node
+                           (not (string= text orig)))
+                  (push (list src-node text) result))))
+            (setq pos next)))))
+    (nreverse result)))
+
+(defun el-prisma--collect-prop-text (buffer idx)
+  "Collect text in BUFFER for node IDX, including internal gaps.
+When editing inserts text at a propertied boundary, the new text
+may lack the property (nil gap). We include nil-propertied segments
+that are sandwiched between two segments of the same IDX."
+  (with-current-buffer buffer
+    (let ((segments nil)
+          (pos (point-min)))
+      ;; Collect all (START END PROP-IDX) segments
+      (while (< pos (point-max))
+        (let ((cur (get-text-property pos 'el-prisma-node-idx))
+              (next (or (next-single-property-change
+                         pos 'el-prisma-node-idx)
+                        (point-max))))
+          (push (list pos next cur) segments)
+          (setq pos next)))
+      (setq segments (nreverse segments))
+      ;; Collect text: include segments matching idx, and nil segments
+      ;; that are between two segments of the same idx
+      (let ((parts nil)
+            (len (length segments)))
+        (cl-loop for i from 0 below len
+                 for seg = (nth i segments)
+                 for seg-idx = (nth 2 seg)
+                 do (cond
+                     ((eql seg-idx idx)
+                      (push (buffer-substring-no-properties
+                             (nth 0 seg) (nth 1 seg))
+                            parts))
+                     ;; Nil gap: include only if sandwiched between two
+                     ;; segments of the SAME idx (edit inserted text)
+                     ((and (null seg-idx)
+                           (> i 0)
+                           (< i (1- len))
+                           (eql idx (nth 2 (nth (1- i) segments)))
+                           (eql idx (nth 2 (nth (1+ i) segments))))
+                      (push (buffer-substring-no-properties
+                             (nth 0 seg) (nth 1 seg))
+                            parts))))
+        (apply #'concat (nreverse parts))))))
+
+(defun el-prisma--mirror-node-order (mirror-buf)
+  "Return the order of `el-prisma-node-idx' values in MIRROR-BUF.
+Returns a deduplicated list of indices in the order they appear."
+  (with-current-buffer mirror-buf
+    (let ((order nil)
+          (pos (point-min)))
+      (while (< pos (point-max))
+        (let ((idx (get-text-property pos 'el-prisma-node-idx))
+              (next (or (next-single-property-change
+                         pos 'el-prisma-node-idx)
+                        (point-max))))
+          (when (and idx (not (memql idx order)))
+            (push idx order))
+          (setq pos next)))
+      (nreverse order))))
+
+(defun el-prisma--build-reorder-ops (node-order render-map source-text
+                                     mirror-buf source-fmt target-fmt)
+  "Build patch ops for reordered nodes.
+NODE-ORDER is the current mirror order of node indices.
+For each node, uses original source text (preserving formatting)
+unless the mirror text changed, in which case re-parses.
+Returns list of (START END REPLACEMENT)."
+  (let* ((idx-to-entry (make-hash-table :test 'eql))
+         (idx-to-orig-mirror (make-hash-table :test 'eql))
+         (all-starts nil)
+         (all-ends nil)
+         (parts nil))
+    ;; Build lookups
+    (dolist (entry render-map)
+      (let ((idx (nth 0 entry))
+            (src-node (nth 1 entry))
+            (mstart (nth 2 entry))
+            (mend (nth 3 entry)))
+        (puthash idx (list src-node mstart mend) idx-to-entry)
+        (puthash idx (substring (with-current-buffer mirror-buf
+                                  el-prisma--mirror-text)
+                                mstart mend)
+                 idx-to-orig-mirror)))
+    ;; Build replacement parts in mirror order
+    (dolist (idx node-order)
+      (when-let* ((info (gethash idx idx-to-entry)))
+        (let* ((src-node (nth 0 info))
+               (s (el-prisma-model-start src-node))
+               (e (el-prisma-model-end src-node))
+               (cur-text (el-prisma--collect-prop-text mirror-buf idx))
+               (orig-mirror (gethash idx idx-to-orig-mirror)))
+          (push s all-starts)
+          (push e all-ends)
+          (if (string= cur-text orig-mirror)
+              ;; Unchanged: use original source bytes (perfect fidelity)
+              (push (substring source-text s e) parts)
+            ;; Changed: re-parse and re-render
+            (let* ((parsed (el-prisma-parse target-fmt cur-text))
+                   (rendered (el-prisma-render source-fmt parsed)))
+              (push rendered parts))))))
+    (when parts
+      (let* ((src-start (apply #'min all-starts))
+             (src-end (apply #'max all-ends))
+             ;; Strip trailing newlines from each part before joining,
+             ;; since source text segments already include trailing \n
+             (trimmed (mapcar (lambda (p)
+                                (replace-regexp-in-string "\n+\\'" "" p))
+                              (nreverse parts)))
+             (replacement (mapconcat #'identity trimmed "\n\n")))
+        (list (list src-start src-end replacement))))))
+
 ;;;; Changed node detection
 
 (defun el-prisma--byte-pos-to-line (text pos)
@@ -400,7 +546,17 @@ When a region is active, converts only the selected region."
       (with-current-buffer mirror-buf
         (let ((inhibit-read-only t))
           (erase-buffer)
-          (insert rendered))
+          (insert rendered)
+          ;; Tag each region with source node index. Properties travel
+          ;; with text through kill/yank and org-metaup/down, so commit
+          ;; can always map mirror regions back to source nodes.
+          (dolist (entry render-map)
+            (let ((idx (nth 0 entry))
+                  (mstart (nth 2 entry))
+                  (mend (nth 3 entry)))
+              (when (< mstart mend)
+                (put-text-property (1+ mstart) (1+ mend)
+                                   'el-prisma-node-idx idx)))))
         (funcall (el-prisma--major-mode-for-format target-fmt))
         (setq el-prisma--source-buffer source-buf
               el-prisma--source-ast source-ast
@@ -484,15 +640,31 @@ pattern from the original source range."
           (goto-char (min (1+ target-pos) (point-max)))
           (when win-offset (recenter win-offset))
           (message "el-prisma: no changes to commit"))
-      (let* ((changed (el-prisma--find-changed-nodes
-                       old-mirror new-mirror render-map))
-             (ops (when changed
+      (let* ((mirror-order (el-prisma--mirror-node-order
+                            (current-buffer)))
+             ;; Only compare nodes with non-zero renders
+             (orig-order (mapcar #'car
+                                 (cl-remove-if
+                                  (lambda (e) (= (nth 2 e) (nth 3 e)))
+                                  render-map)))
+             (reordered (not (equal mirror-order orig-order)))
+             ;; Hybrid: line-based for edits, property-based for reorder
+             (changed (unless reordered
+                        (el-prisma--find-changed-nodes
+                         old-mirror new-mirror render-map)))
+             (ops (cond
+                   (reordered
+                    (el-prisma--build-reorder-ops
+                     mirror-order render-map source-text
+                     (current-buffer) source-fmt target-fmt))
+                   (changed
                     (el-prisma--build-patch-ops
-                     changed source-fmt target-fmt)))
+                     changed source-fmt target-fmt))))
              (patched (if ops
                          (el-prisma--apply-patch-ops source-text ops)
                        source-text))
-             (nchanged (length changed)))
+             (nchanged (+ (length changed)
+                          (if reordered 1 0))))
         ;; DATA LOSS SAFEGUARD: mirror was modified (we passed the
         ;; string= check above) but patch produced no source change.
         ;; This means the pipeline failed to propagate edits. NEVER
