@@ -103,6 +103,33 @@ Test fixture: `prisma-iso--md-varied-ws` has 2, 3, and 4 newlines between blocks
 | F5 | Add lines to paragraph | 1 block differs | DONE |
 | F6 | Add lines to code block | 1 block differs | DONE |
 
+### Group G: Tables
+
+Tables are structured nodes in the intermediary model (`table`, `table-row`, `table-separator`, `table-cell`). Conversion is asymmetric by design: MD renders in loose form (one-space cell padding, separator dashes match header cell widths) so committed output matches hand-written MD shape; Org renders column-aligned (cells padded to max column `string-width`, `+` joiner) so the mirror buffer is comfortable to edit. Round-trips with no edits are byte-identical via the source-bytes path; edited tables re-render in the target format's preferred shape.
+
+| Test | Operation | Verify | Status |
+|------|-----------|--------|--------|
+| G1 | MD->Org basic conversion | + separator, columns padded by `string-width` | DONE |
+| G2 | Org->MD basic conversion | `|` separator, loose (1-space) padding | DONE |
+| G3 | MD->Org->MD round-trip (no edits) | Byte-identical via source bytes | DONE |
+| G4 | Org->MD->Org round-trip (no edits) | Byte-identical via source bytes | DONE |
+| G5 | Edit cell in MD source via Org mirror | 1 block differs (the table) | DONE |
+| G6 | Edit cell in Org source via MD mirror | 1 block differs | DONE |
+| G7 | Inline bold/italic/code in cells | Markup converts in both directions | DONE |
+| G8 | Link inside cell | Link syntax converts | DONE |
+| G9 | MD alignment markers (:---, :---:, ---:) | Parsed; emitted on MD output; absent on Org | DONE |
+| G10 | Empty cell | Renders as space-padded | DONE |
+| G11 | Single-column table | Renders correctly | DONE |
+| G12 | Wide chars (CJK) in cells | `string-width` based padding | DONE |
+| G13 | Header-only table (no body rows) | Renders correctly | DONE |
+| G14 | Org table without separator -> MD | Separator injected after first row | DONE |
+| G15 | Multiple hlines in Org -> MD | Collapsed to single header separator | DONE |
+| G16 | Long content overflows column | Column expands on re-render | DONE |
+| G17 | Escaped pipe in cell (`\|`) | Round-trips through both formats | DONE |
+| G18 | Table after a paragraph (preceded by `Before`) | Both blocks preserved | DONE |
+| G19 | Table before a paragraph | Both blocks preserved | DONE |
+| G20 | Header cell edit | 1 block differs | DONE |
+
 ## Real-file test
 
 Must test with actual markdown files (not just synthetic fixtures). The file `~/GitHub/agzam/Redesigning remoto.el lookup architectur.md` (36KB) is a known regression case. A single word edit should produce exactly 1 line diff.

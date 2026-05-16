@@ -109,6 +109,8 @@ INLINE-ROOT is the inline tree-sitter root; TEXT is the source string."
        (prisma-md--process-code-block node text))
       ("block_quote"
        (prisma-md--process-blockquote node inline-root text))
+      ("pipe_table"
+       (prisma-md--process-table node inline-root text))
       ("thematic_break"
        (prisma-model-horiz-rule
         :start start :end end :source-format 'markdown))
@@ -230,6 +232,113 @@ INLINE-ROOT and TEXT are forwarded to inline parsing."
     (prisma-model-blockquote
      :children children
      :start start :end end :source-format 'markdown)))
+
+;;;; Table processing
+
+(defun prisma-md--process-table (node inline-root text)
+  "Process a pipe_table NODE.
+INLINE-ROOT and TEXT are forwarded to cell inline parsing."
+  (let ((alignments nil)
+        (children nil))
+    (dolist (child (treesit-node-children node t))
+      (pcase (treesit-node-type child)
+        ("pipe_table_header"
+         (push (prisma-md--process-table-row child inline-root text)
+               children))
+        ("pipe_table_delimiter_row"
+         (setq alignments (prisma-md--table-alignments child))
+         (push (prisma-model-table-separator
+                :start (treesit-node-start child)
+                :end (treesit-node-end child)
+                :source-format 'markdown)
+               children))
+        ("pipe_table_row"
+         (push (prisma-md--process-table-row child inline-root text)
+               children))))
+    (prisma-model-table
+     :alignments alignments
+     :children (nreverse children)
+     :start (treesit-node-start node)
+     :end (treesit-node-end node)
+     :source-format 'markdown)))
+
+(defun prisma-md--process-table-row (node inline-root text)
+  "Convert a pipe_table_header/pipe_table_row NODE to a `table-row'.
+INLINE-ROOT and TEXT are forwarded to cell inline parsing."
+  (let ((cells
+         (cl-loop for c in (treesit-node-children node t)
+                  when (string= (treesit-node-type c) "pipe_table_cell")
+                  collect (prisma-md--process-table-cell
+                           c inline-root text))))
+    (prisma-model-table-row
+     :children cells
+     :start (treesit-node-start node)
+     :end (treesit-node-end node)
+     :source-format 'markdown)))
+
+(defun prisma-md--process-table-cell (node inline-root text)
+  "Convert a pipe_table_cell NODE to a `table-cell'.
+Cell text is trimmed; inline children come from INLINE-ROOT.
+TEXT is the buffer text used for slicing.  `\\|' sequences inside
+text children are unescaped to literal `|' so the model stores
+logical cell content; the renderer re-escapes on emit."
+  (let* ((start (treesit-node-start node))
+         (end (treesit-node-end node))
+         (raw (substring text start end))
+         (trimmed (string-trim raw))
+         (lead (- (length raw) (length (string-trim-left raw))))
+         (trail (- (length raw) (length (string-trim-right raw))))
+         (inner-start (+ start lead))
+         (inner-end (- end trail))
+         (children
+          (if (string-empty-p trimmed)
+              nil
+            (let* ((nodes (prisma-ts-nodes-in-range
+                           inline-root inner-start inner-end))
+                   (raw-children (prisma-md--fill-text-gaps
+                                  nodes inner-start inner-end text)))
+              (mapcar #'prisma-md--unescape-cell-pipes
+                      raw-children)))))
+    (prisma-model-table-cell
+     :children children
+     :start start :end end :source-format 'markdown)))
+
+(defun prisma-md--unescape-cell-pipes (node)
+  "Replace `\\|' with `|' in any `text' NODE value (returning NODE)."
+  (if (eq (prisma-model-type node) 'text)
+      (let ((v (prisma-model-prop node :value)))
+        (if (and v (string-match-p "\\\\|" v))
+            (plist-put (copy-sequence node) :props
+                       (list :value (replace-regexp-in-string
+                                     "\\\\|" "|" v)))
+          node))
+    node))
+
+(defun prisma-md--render-cell-child (child)
+  "Render CHILD inside a table cell with appropriate pipe escaping.
+A `passthrough' child is emitted verbatim - it already contains the
+source-level escape sequence (`\\|') and must not be re-escaped.
+All other content has stray `|' replaced with `\\|'."
+  (let ((rendered (prisma-md--render-node child)))
+    (if (eq (prisma-model-type child) 'passthrough)
+        rendered
+      (replace-regexp-in-string "|" "\\\\|" rendered))))
+
+(defun prisma-md--table-alignments (delimiter-row)
+  "Extract column alignments from a pipe_table_delimiter_row NODE.
+Returns list of `:left', `:right', `:center', or `:default'."
+  (cl-loop for cell in (treesit-node-children delimiter-row t)
+           when (string= (treesit-node-type cell)
+                         "pipe_table_delimiter_cell")
+           collect
+           (let* ((kids (treesit-node-children cell))
+                  (types (mapcar #'treesit-node-type kids))
+                  (has-left (member "pipe_table_align_left" types))
+                  (has-right (member "pipe_table_align_right" types)))
+             (cond ((and has-left has-right) :center)
+                   (has-left :left)
+                   (has-right :right)
+                   (t :default)))))
 
 ;;;; Inline processing
 
@@ -381,6 +490,7 @@ KIND is `strong' or `emphasis'.  TEXT supplies inline source bytes."
                "```")))
     ('list (prisma-md--render-list node))
     ('list-item (prisma-md--render-list-item node))
+    ('table (prisma-md--render-table node))
     ('blockquote
      (let ((inner (mapconcat #'prisma-md--render-node
                              (prisma-model-children node) "\n")))
@@ -422,6 +532,87 @@ KIND is `strong' or `emphasis'.  TEXT supplies inline source bytes."
 (defun prisma-md--render-list-item (node)
   "Render a standalone list-item NODE (fallback)."
   (concat "- " (prisma-md--render-children node)))
+
+(defun prisma-md--render-cell-content (cell)
+  "Render CELL inline children to a string, escaping bare `|' as `\\|'.
+Passthrough children are emitted verbatim (their `\\|' is already
+escape-correct), other children get literal `|' escaped."
+  (mapconcat #'prisma-md--render-cell-child
+             (prisma-model-children cell) ""))
+
+(defun prisma-md--alignment-dashes (align width)
+  "Return separator dashes for ALIGN at column WIDTH.
+WIDTH is the column content width; the emitted segment has WIDTH+2
+characters total (matching the cell's outer padding of one space)."
+  (let* ((total (max 3 (+ width 2)))
+         (dashes (make-string total ?-)))
+    (pcase align
+      (:left  (concat ":" (substring dashes 1)))
+      (:right (concat (substring dashes 0 (1- total)) ":"))
+      (:center (concat ":" (substring dashes 1 (1- total)) ":"))
+      (_ dashes))))
+
+(defun prisma-md--render-table (node)
+  "Render a `table' NODE to GFM Markdown in loose form.
+
+Each cell is emitted with one-space outer padding only - no column
+alignment - so the result matches typical hand-written Markdown
+shape.  Separator dashes match the header row's cell widths
+\(content width + 2 outer spaces, GFM minimum 3) and use any
+`:alignments' markers stored on the table.
+
+GFM requires exactly one separator row after the header, so any
+extra `table-separator' children (Org allows multiple hlines) are
+dropped and a single separator is injected after the first row if
+none was present."
+  (let* ((children (prisma-model-children node))
+         (rows-only (cl-remove-if
+                     (lambda (c)
+                       (eq (prisma-model-type c) 'table-separator))
+                     children))
+         (effective
+          (if (null rows-only)
+              nil
+            (let (acc inserted)
+              (dolist (c rows-only)
+                (push c acc)
+                (when (and (not inserted)
+                           (eq (prisma-model-type c) 'table-row))
+                  (push (prisma-model-table-separator
+                         :source-format 'markdown)
+                        acc)
+                  (setq inserted t)))
+              (nreverse acc))))
+         (first-row (car rows-only))
+         (header-widths
+          (when first-row
+            (mapcar (lambda (cell)
+                      (string-width
+                       (prisma-md--render-cell-content cell)))
+                    (prisma-model-children first-row))))
+         (ncols (length header-widths))
+         (alignments (or (prisma-model-prop node :alignments)
+                         (make-list ncols :default))))
+    (mapconcat
+     (lambda (child)
+       (pcase (prisma-model-type child)
+         ('table-row
+          (concat "| "
+                  (mapconcat #'prisma-md--render-cell-content
+                             (prisma-model-children child)
+                             " | ")
+                  " |"))
+         ('table-separator
+          (concat "|"
+                  (mapconcat
+                   (lambda (pair)
+                     (prisma-md--alignment-dashes
+                      (car pair) (cdr pair)))
+                   (cl-mapcar #'cons alignments header-widths)
+                   "|")
+                  "|"))))
+     effective
+     "\n")))
 
 (provide 'prisma-md)
 ;;; prisma-md.el ends here

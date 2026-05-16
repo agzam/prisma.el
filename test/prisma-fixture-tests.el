@@ -265,7 +265,27 @@ Returns the actual source text after commit."
     (:name "edge: special characters in paragraph"
      :source "# Title\n\nHas < and > and & chars"
      :edits (("Has" . "Contains"))
-     :expected "# Title\n\nContains < and > and & chars"))
+     :expected "# Title\n\nContains < and > and & chars")
+
+    ;; ══════════════════════════════════════════════════════════════
+    ;; TABLES
+    ;; ══════════════════════════════════════════════════════════════
+
+    (:name "baseline: simple table"
+     :source "| A | B |\n|---|---|\n| 1 | 2 |")
+
+    (:name "baseline: table between paragraphs"
+     :source "# Title\n\nBefore\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nAfter")
+
+    (:name "edit: data cell value"
+     :source "| Test | Operation |\n|------|-----------|\n| A1 | old word |\n| A2 | other op |"
+     :edits (("old word" . "new word"))
+     :expected "| Test | Operation |\n|------|-----------|\n| A1 | new word |\n| A2 | other op |")
+
+    (:name "edit: header cell"
+     :source "| Test | Operation |\n|------|-----------|\n| A1 | edit |"
+     :edits (("Operation" . "Action"))
+     :expected "| Test | Action |\n|------|--------|\n| A1 | edit |"))
 
   "Fixture cases for MD -> Org -> MD round-trip testing.
 Each entry is a plist with :name, :source, optional :edits, optional :expected.
@@ -383,7 +403,22 @@ When :expected is nil, expects byte-identical to :source after commit.")
     (:name "multi: code block + list"
      :source "#+begin_src js\nold()\n#+end_src\n\n- old item"
      :edits (("old()" . "new()") ("old item" . "new item"))
-     :expected "#+begin_src js\nnew()\n#+end_src\n\n- new item"))
+     :expected "#+begin_src js\nnew()\n#+end_src\n\n- new item")
+
+    ;; ══════════════════════════════════════════════════════════════
+    ;; TABLES
+    ;; ══════════════════════════════════════════════════════════════
+
+    (:name "baseline: simple table"
+     :source "| A | B |\n|---+---|\n| 1 | 2 |")
+
+    (:name "baseline: aligned table between paragraphs"
+     :source "* Title\n\nBefore\n\n| A | B |\n|---+---|\n| 1 | 2 |\n\nAfter")
+
+    (:name "edit: data cell value (Org)"
+     :source "| Test | Op       |\n|------+----------|\n| A1   | old word |\n| A2   | other op |"
+     :edits (("old word" . "new word"))
+     :expected "| Test | Op       |\n|------+----------|\n| A1   | new word |\n| A2   | other op |"))
 
   "Fixture cases for Org -> MD -> Org round-trip testing.")
 

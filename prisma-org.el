@@ -325,23 +325,13 @@ If END-REGEX never matches, BODY-LINES is everything to end of LINES."
                    :source-format 'org)
                   result)))
 
-         ;; Table: | ... | lines (passthrough)
-         ((string-match "^|" line)
-          (let* ((table-start cur-pos)
-                 (table-lines nil))
-            (while (and (< i nlines)
-                        (string-match "^|" (nth i lines)))
-              (push (nth i lines) table-lines)
-              (setq cur-pos (+ cur-pos (length (nth i lines)) 1))
-              (setq i (1+ i)))
-            (let ((text (mapconcat #'identity
-                                   (nreverse table-lines) "\n")))
-              (push (prisma-model-passthrough
-                     :text text
-                     :start table-start
-                     :end (1- cur-pos)
-                     :source-format 'org)
-                    result))))
+         ;; Table: | ... | lines (structured)
+         ((string-match "^\\s-*|" line)
+          (pcase-let ((`(,node ,next-i ,next-pos)
+                       (prisma-org--parse-table lines i cur-pos)))
+            (push node result)
+            (setq i next-i)
+            (setq cur-pos next-pos)))
 
          ;; Horizontal rule: -----
          ((string-match "^-\\{5,\\}$" line)
@@ -423,6 +413,100 @@ Returns (list-node next-i next-pos)."
            :source-format 'org)
           i cur-pos)))
 
+(defun prisma-org--table-separator-p (line)
+  "Return non-nil when LINE is an Org table hline.
+Matches \"|---+---|\", \"|---|---|\", \"| --- | --- |\" and similar.
+A separator has only `-', `+', `|', `:', and whitespace between the
+opening and closing pipes (and contains at least one `-')."
+  (and (string-match "^\\s-*|[-+|:\t ]+|?\\s-*$" line)
+       (string-match-p "-" line)))
+
+(defun prisma-org--parse-table (lines start-i pos)
+  "Parse an Org table starting at LINES[START-I] at byte POS.
+Returns (table-node next-i next-pos)."
+  (let ((rows nil)
+        (i start-i)
+        (nlines (length lines))
+        (cur-pos pos)
+        (table-start pos))
+    (while (and (< i nlines)
+                (string-match "^\\s-*|" (nth i lines)))
+      (let* ((line (nth i lines))
+             (line-end (+ cur-pos (length line))))
+        (push (if (prisma-org--table-separator-p line)
+                  (prisma-model-table-separator
+                   :start cur-pos
+                   :end line-end
+                   :source-format 'org)
+                (prisma-org--parse-table-row line cur-pos))
+              rows))
+      (setq cur-pos (+ cur-pos (length (nth i lines)) 1))
+      (setq i (1+ i)))
+    (list (prisma-model-table
+           :children (nreverse rows)
+           :start table-start
+           :end (1- cur-pos)
+           :source-format 'org)
+          i cur-pos)))
+
+(defun prisma-org--find-cell-pipe (line from)
+  "Return position of next unescaped `|' in LINE at/after FROM, or nil.
+A `|' preceded by an odd run of `\\\\' chars is treated as escaped."
+  (let ((pos from) found)
+    (while (and (not found)
+                (setq pos (string-match "|" line pos)))
+      (let ((bs 0))
+        (while (and (< 0 (- pos bs))
+                    (= (aref line (- pos bs 1)) ?\\))
+          (cl-incf bs))
+        (if (cl-oddp bs)
+            (setq pos (1+ pos))
+          (setq found pos))))
+    found))
+
+(defun prisma-org--parse-table-row (line pos)
+  "Parse Org table data row LINE starting at byte POS.
+Returns a `table-row' node with `table-cell' children whose inline
+content is parsed via `prisma-org--parse-inlines'.  Pipes preceded
+by an odd number of backslashes are treated as literal characters
+inside the cell, not separators; the backslash is then stripped from
+the parsed cell text so the model stores logical content."
+  (let* ((line-start pos)
+         (line-end (+ pos (length line)))
+         (first-pipe (prisma-org--find-cell-pipe line 0))
+         (cells nil))
+    (when first-pipe
+      (let ((cell-start (1+ first-pipe))
+            next-pipe)
+        (while (and (< cell-start (length line))
+                    (setq next-pipe (prisma-org--find-cell-pipe
+                                     line cell-start)))
+          (let* ((raw (substring line cell-start next-pipe))
+                 (lead (- (length raw)
+                          (length (string-trim-left raw))))
+                 (trimmed (string-trim raw))
+                 ;; Unescape "\|" -> "|" so the model stores the
+                 ;; logical pipe character.  The renderer re-escapes.
+                 (unescaped (replace-regexp-in-string
+                             "\\\\|" "|" trimmed))
+                 (content-start (+ line-start cell-start lead))
+                 (children (if (string-empty-p unescaped)
+                               nil
+                             (prisma-org--parse-inlines
+                              unescaped content-start))))
+            (push (prisma-model-table-cell
+                   :children children
+                   :start (+ line-start cell-start)
+                   :end (+ line-start next-pipe)
+                   :source-format 'org)
+                  cells))
+          (setq cell-start (1+ next-pipe)))))
+    (prisma-model-table-row
+     :children (nreverse cells)
+     :start line-start
+     :end line-end
+     :source-format 'org)))
+
 (defun prisma-org--parse-paragraph (lines start-i pos)
   "Parse a paragraph starting at START-I in LINES at byte POS.
 Collects consecutive non-blank, non-structural lines.
@@ -439,7 +523,7 @@ Returns (paragraph-node next-i next-pos)."
                        (not (string-match "^#\\+begin_" (downcase line)))
                        (not (string-match "^#\\+end_" (downcase line)))
                        (not (string-match "^-\\{5,\\}$" line))
-                       (not (string-match "^|" line))
+                       (not (string-match "^\\s-*|" line))
                        (not (string-match "^\\(?:- \\|[0-9]+\\. \\)" line)))))
       (push (nth i lines) para-lines)
       (setq cur-pos (+ cur-pos (length (nth i lines)) 1))
@@ -499,6 +583,7 @@ Returns (paragraph-node next-i next-pos)."
      (let ((content (mapconcat #'prisma-org--render-node
                                (prisma-model-children node) "\n")))
        (concat "#+begin_quote\n" content "\n#+end_quote")))
+    ('table (prisma-org--render-table node))
     ('horiz-rule "-----")
     ('passthrough
      (string-trim-right (or (prisma-model-prop node :text) "") "\n"))
@@ -537,6 +622,44 @@ otherwise emits an unordered \"- \" marker."
               ('unchecked "[ ] ")
               (_ ""))
             content)))
+
+(defun prisma-org--render-cell-content (cell)
+  "Render CELL's inline children to a string (no surrounding padding)."
+  (mapconcat #'prisma-org--render-node
+             (prisma-model-children cell) ""))
+
+(defun prisma-org--render-table (node)
+  "Render a `table' NODE to Org syntax.
+Columns are padded to the widest cell content (via `string-width').
+Separators use `+' between column blocks; cells are left-aligned."
+  (let* ((widths (prisma-model-table-column-widths
+                  node #'prisma-org--render-cell-content))
+         (ncols (length widths))
+         (pad-cell
+          (lambda (cell col)
+            (let* ((rendered (prisma-org--render-cell-content cell))
+                   (w (or (nth col widths) 0))
+                   (pad (max 0 (- w (string-width rendered)))))
+              (concat rendered (make-string pad ?\s))))))
+    (mapconcat
+     (lambda (child)
+       (pcase (prisma-model-type child)
+         ('table-row
+          (let* ((cells (prisma-model-children child))
+                 (parts (cl-loop for col from 0 below ncols
+                                 for cell = (nth col cells)
+                                 collect (if cell
+                                             (funcall pad-cell cell col)
+                                           (make-string
+                                            (or (nth col widths) 0) ?\s)))))
+            (concat "| " (mapconcat #'identity parts " | ") " |")))
+         ('table-separator
+          (concat "|"
+                  (mapconcat (lambda (w) (make-string (+ w 2) ?-))
+                             widths "+")
+                  "|"))))
+     (prisma-model-children node)
+     "\n")))
 
 (provide 'prisma-org)
 ;;; prisma-org.el ends here

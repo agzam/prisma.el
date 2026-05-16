@@ -233,17 +233,50 @@
             :to-equal "-----")))
 
 (describe "Org parser - tables"
-  (it "parses pipe tables as passthrough"
+  (it "parses pipe tables as structured table nodes"
     (let* ((ast (prisma-parse 'org "| A | B |\n|---|---|\n| 1 | 2 |\n"))
-           (pt (car (prisma-model-children ast))))
-      (expect (prisma-model-type pt) :to-equal 'passthrough)
-      (expect (prisma-model-prop pt :text) :to-match "| A | B |")))
+           (tbl (car (prisma-model-children ast))))
+      (expect (prisma-model-type tbl) :to-equal 'table)
+      (expect (mapcar #'prisma-model-type
+                      (prisma-model-children tbl))
+              :to-equal '(table-row table-separator table-row))))
 
-  (it "table followed by paragraph keeps both"
+  (it "extracts header cells as text"
+    (let* ((ast (prisma-parse 'org "| Alpha | Bravo |\n|---+---|\n| 1 | 2 |\n"))
+           (tbl (car (prisma-model-children ast)))
+           (header (car (prisma-model-children tbl))))
+      (expect (mapcar
+               (lambda (cell)
+                 (mapconcat (lambda (c)
+                              (or (prisma-model-prop c :value) ""))
+                            (prisma-model-children cell) ""))
+               (prisma-model-children header))
+              :to-equal '("Alpha" "Bravo"))))
+
+  (it "parses inline markup inside cells"
+    (let* ((ast (prisma-parse 'org "| *bold* | /italic/ |\n|---+---|\n"))
+           (tbl (car (prisma-model-children ast)))
+           (cell-types
+            (mapcar
+             (lambda (cell)
+               (mapcar #'prisma-model-type
+                       (prisma-model-children cell)))
+             (prisma-model-children
+              (car (prisma-model-children tbl))))))
+      (expect cell-types :to-equal '((strong) (emphasis)))))
+
+  (it "detects hlines with + joiners"
+    (let* ((ast (prisma-parse 'org "| A | B |\n|---+---|\n| 1 | 2 |\n"))
+           (tbl (car (prisma-model-children ast))))
+      (expect (mapcar #'prisma-model-type
+                      (prisma-model-children tbl))
+              :to-equal '(table-row table-separator table-row))))
+
+  (it "table followed by paragraph keeps both as separate blocks"
     (let* ((ast (prisma-parse 'org "| A |\n|---|\n| 1 |\n\nAfter.\n"))
            (types (mapcar #'prisma-model-type
                           (prisma-model-children ast))))
-      (expect types :to-equal '(passthrough paragraph)))))
+      (expect types :to-equal '(table paragraph)))))
 
 
 

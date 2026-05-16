@@ -111,6 +111,31 @@ unless the previous part already ends with two newlines."
         (push rendered parts)))
     (apply #'concat (nreverse parts))))
 
+(defun prisma-model-table-column-widths (table render-cell-fn)
+  "Return a list of column display widths for TABLE.
+TABLE is a `table' node.  RENDER-CELL-FN renders the children of one
+`table-cell' to a string (without surrounding padding).
+Widths use `string-width' so multibyte characters count correctly.
+Skips `table-separator' children and pads ragged rows with width 0.
+A column has minimum width 1 so an empty cell still renders visibly."
+  (let* ((rows (cl-remove-if-not
+                (lambda (c) (eq (prisma-model-type c) 'table-row))
+                (prisma-model-children table)))
+         (ncols (apply #'max 0 (mapcar (lambda (r)
+                                         (length (prisma-model-children r)))
+                                       rows))))
+    (cl-loop for col from 0 below ncols
+             collect
+             (apply #'max 1
+                    (mapcar
+                     (lambda (row)
+                       (let ((cell (nth col (prisma-model-children row))))
+                         (if cell
+                             (string-width
+                              (funcall render-cell-fn cell))
+                           0)))
+                     rows)))))
+
 ;;;; Convenience constructor helpers
 
 (defun prisma-model--extract-props (args keys)
@@ -151,7 +176,10 @@ Standard keys :start :end :source-format :children are handled automatically."
 (prisma-model--define-node list-item (:checkbox))
 (prisma-model--define-node code-block (:language :body))
 (prisma-model--define-node blockquote nil)
-(prisma-model--define-node table (:rows))
+(prisma-model--define-node table (:alignments))
+(prisma-model--define-node table-row nil)
+(prisma-model--define-node table-separator nil)
+(prisma-model--define-node table-cell nil)
 (prisma-model--define-node horiz-rule nil)
 (prisma-model--define-node passthrough (:text))
 

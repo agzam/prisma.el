@@ -129,5 +129,165 @@
            (re-org (prisma-render 'org org-ast)))
       (expect org :to-equal re-org))))
 
+;;;; Group G - Tables
+
+(describe "Tables: MD parser"
+
+  (it "parses pipe_table into structured nodes"
+    (let* ((md "| A | B |\n|---|---|\n| 1 | 2 |\n")
+           (ast (prisma-parse 'markdown md))
+           (tbl (car (prisma-model-children ast))))
+      (expect (prisma-model-type tbl) :to-equal 'table)
+      (expect (mapcar #'prisma-model-type
+                      (prisma-model-children tbl))
+              :to-equal '(table-row table-separator table-row))))
+
+  (it "extracts alignment markers"
+    (let* ((md "| L | C | R | D |\n|:---|:---:|---:|---|\n| 1 | 2 | 3 | 4 |\n")
+           (ast (prisma-parse 'markdown md))
+           (tbl (car (prisma-model-children ast))))
+      (expect (prisma-model-prop tbl :alignments)
+              :to-equal '(:left :center :right :default))))
+
+  (it "parses inline markup inside cells"
+    (let* ((md "| A **bold** | B *italic* | `code` |\n|---|---|---|\n")
+           (ast (prisma-parse 'markdown md))
+           (header (car (prisma-model-children
+                         (car (prisma-model-children ast)))))
+           (cells (prisma-model-children header))
+           (cell-child-types
+            (mapcar (lambda (cell)
+                      (mapcar #'prisma-model-type
+                              (prisma-model-children cell)))
+                    cells)))
+      ;; First cell: text "A " + strong
+      (expect (cadar cell-child-types) :to-equal 'strong)
+      ;; Second cell: text "B " + emphasis
+      (expect (cadr (cadr cell-child-types)) :to-equal 'emphasis)
+      ;; Third cell: code
+      (expect (caddr cell-child-types) :to-equal '(code))))
+
+  (it "parses links inside cells"
+    (let* ((md "| Link |\n|---|\n| [click](http://x) |\n")
+           (ast (prisma-parse 'markdown md))
+           (data-row (nth 2 (prisma-model-children
+                             (car (prisma-model-children ast)))))
+           (cell (car (prisma-model-children data-row)))
+           (link (car (prisma-model-children cell))))
+      (expect (prisma-model-type link) :to-equal 'link)
+      (expect (prisma-model-prop link :url) :to-equal "http://x"))))
+
+(describe "Tables: MD->Org conversion"
+
+  (it "converts pipe separator to + separator with column alignment"
+    (let* ((md "| Test | Operation | Status |
+|------|-----------|--------|
+| A1 | Edit word | DONE |
+| A2 | Edit longer text | DONE |
+")
+           (org (prisma-render 'org (prisma-parse 'markdown md))))
+      (expect org :to-equal "| Test | Operation        | Status |
+|------+------------------+--------|
+| A1   | Edit word        | DONE   |
+| A2   | Edit longer text | DONE   |")))
+
+  (it "reproduces the user's known example"
+    (let* ((md "| Test | Operation | Verify | Status |
+|------|-----------|--------|--------|
+| A1 | Edit paragraph word | 1 block differs | DONE |
+| A2 | Edit heading text | 1 block differs | DONE |
+| A11 | Single char change in large doc | 1 block differs | DONE |
+")
+           (org (prisma-render 'org (prisma-parse 'markdown md))))
+      (expect org :to-equal "| Test | Operation                       | Verify          | Status |
+|------+---------------------------------+-----------------+--------|
+| A1   | Edit paragraph word             | 1 block differs | DONE   |
+| A2   | Edit heading text               | 1 block differs | DONE   |
+| A11  | Single char change in large doc | 1 block differs | DONE   |")))
+
+  (it "converts inline markup inside cells"
+    (let* ((md "| A **bold** | B *italic* |\n|---|---|\n| 1 | 2 |\n")
+           (org (prisma-render 'org (prisma-parse 'markdown md))))
+      (expect org :to-match "A \\*bold\\*")
+      (expect org :to-match "B /italic/")))
+
+  (it "converts links inside cells"
+    (let* ((md "| Link |\n|---|\n| [click](http://x) |\n")
+           (org (prisma-render 'org (prisma-parse 'markdown md))))
+      (expect org :to-match "\\[\\[http://x\\]\\[click\\]\\]")))
+
+  (it "handles CJK widths via string-width"
+    (let* ((md "| 私 | World |\n|---|---|\n| あ | hello |\n")
+           (org (prisma-render 'org (prisma-parse 'markdown md))))
+      ;; Each CJK char is width 2, so column 1 is width 2.
+      (expect org :to-match "| 私 |"))))
+
+(describe "Tables: round-trip MD->Org->MD"
+
+  (it "produces valid GFM (single separator) from multi-hline Org"
+    (let* ((org "| A | B |\n|---+---|\n| 1 | 2 |\n|---+---|\n| 3 | 4 |\n")
+           (md (prisma-render 'markdown (prisma-parse 'org org))))
+      ;; Exactly one separator row in the output
+      (expect (length
+               (cl-remove-if-not
+                (lambda (line) (string-match-p "^|---" line))
+                (split-string md "\n")))
+              :to-equal 1)))
+
+  (it "renders MD back from Org converted from MD"
+    (let* ((md "| A | B |\n|---|---|\n| 1 | 2 |\n")
+           (org (prisma-render 'org (prisma-parse 'markdown md)))
+           (back (prisma-render 'markdown (prisma-parse 'org org))))
+      (expect back :to-equal "| A | B |
+|---|---|
+| 1 | 2 |"))))
+
+(describe "Tables: edge cases"
+
+  (it "single column table renders correctly"
+    (let* ((md "| Only |\n|---|\n| 1 |\n")
+           (org (prisma-render 'org (prisma-parse 'markdown md))))
+      (expect org :to-match "^| Only |")
+      (expect org :to-match "|------|")))
+
+  (it "header-only table renders without body"
+    (let* ((md "| A | B |\n|---|---|\n")
+           (org (prisma-render 'org (prisma-parse 'markdown md))))
+      (expect org :to-equal "| A | B |\n|---+---|")))
+
+  (it "empty cell renders as space-padded"
+    (let* ((md "| A |  | C |\n|---|---|---|\n")
+           (org (prisma-render 'org (prisma-parse 'markdown md))))
+      (expect org :to-match "| A |   | C |")))
+
+  (it "escaped pipe in cell preserved on MD output"
+    (let* ((md "| A \\| B | C |\n|---|---|\n| 1 \\| 2 | 3 |\n")
+           (back (prisma-render 'markdown
+                                (prisma-parse 'org
+                                              (prisma-render 'org
+                                                             (prisma-parse 'markdown md))))))
+      ;; Round-trip preserves the escape
+      (expect back :to-match "A \\\\| B")
+      (expect back :to-match "1 \\\\| 2"))))
+
+(describe "Tables: Org->MD conversion"
+
+  (it "+ separator becomes | separator"
+    (let* ((org "| A | B |\n|---+---|\n| 1 | 2 |\n")
+           (md (prisma-render 'markdown (prisma-parse 'org org))))
+      (expect md :to-equal "| A | B |\n|---|---|\n| 1 | 2 |")))
+
+  (it "Org table without separator gets one injected in MD"
+    (let* ((org "| A | B |\n| 1 | 2 |\n")
+           (md (prisma-render 'markdown (prisma-parse 'org org))))
+      ;; Must contain a separator row for valid GFM
+      (expect md :to-match "^|---")))
+
+  (it "converts inline markup back"
+    (let* ((org "| *bold* | /italic/ |\n|---+---|\n")
+           (md (prisma-render 'markdown (prisma-parse 'org org))))
+      (expect md :to-match "\\*\\*bold\\*\\*")
+      (expect md :to-match "\\*italic\\*"))))
+
 (provide 'prisma-md-tests)
 ;;; prisma-md-tests.el ends here

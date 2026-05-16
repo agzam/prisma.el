@@ -611,6 +611,63 @@ Both must have the same block count (non-structural edits)."
       (expect (prisma-iso--count-block-changes src res) :to-equal 1)
       (expect (prisma-iso--changed-block-indices src res) :to-equal '(1)))))
 
+;;;; ================================================================
+;;;; 7. TABLE ISOLATION
+;;;; ================================================================
+
+;; Document with a table sandwiched between paragraphs.
+(defvar prisma-iso--md-with-table
+  "# Title\n\nBefore table\n\n| Test | Operation | Status |\n|------|-----------|--------|\n| A1 | Edit word | DONE |\n| A2 | Other op | DONE |\n\nAfter table")
+
+(defvar prisma-iso--org-with-table
+  "* Title\n\nBefore table\n\n| Test | Operation | Status |\n|------+-----------+--------|\n| A1   | Edit word | DONE   |\n| A2   | Other op  | DONE   |\n\nAfter table")
+
+(describe "Table isolation (MD source)"
+
+  (it "editing a cell value changes only the table block"
+    (let* ((src prisma-iso--md-with-table)
+           (res (prisma-iso--run
+                 #'markdown-mode src
+                 (prisma-iso--replace '("Edit word" . "Edit changed")))))
+      ;; Around the table is preserved
+      (expect res :to-match "# Title")
+      (expect res :to-match "Before table")
+      (expect res :to-match "After table")
+      ;; Edit is applied
+      (expect res :to-match "Edit changed")
+      ;; Exactly one block (the table) differs
+      (expect (prisma-iso--count-block-changes src res) :to-equal 1)))
+
+  (it "editing a header cell changes only the table block"
+    (let* ((src prisma-iso--md-with-table)
+           (res (prisma-iso--run
+                 #'markdown-mode src
+                 (prisma-iso--replace '("Operation" . "Action")))))
+      (expect res :to-match "Action")
+      (expect (prisma-iso--count-block-changes src res) :to-equal 1)))
+
+  (it "editing the paragraph before the table changes only that paragraph"
+    (let* ((src prisma-iso--md-with-table)
+           (res (prisma-iso--run
+                 #'markdown-mode src
+                 (prisma-iso--replace
+                  '("Before table" . "Updated intro")))))
+      (expect (prisma-iso--count-block-changes src res) :to-equal 1)
+      (expect (prisma-iso--changed-block-indices src res)
+              :to-equal '(1)))))
+
+(describe "Table isolation (Org source)"
+
+  (it "editing a cell value through MD mirror changes only the table"
+    (let* ((src prisma-iso--org-with-table)
+           (res (prisma-iso--run
+                 #'org-mode src
+                 (prisma-iso--replace '("Edit word" . "Edit changed")))))
+      (expect res :to-match "Edit changed")
+      (expect res :to-match "Before table")
+      (expect res :to-match "After table")
+      (expect (prisma-iso--count-block-changes src res) :to-equal 1))))
+
 (describe "Boundary: single character and minimal edits"
 
   (it "single character change in large doc affects only one block"
