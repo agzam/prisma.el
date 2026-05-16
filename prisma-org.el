@@ -1,4 +1,4 @@
-;;; prisma-org.el --- Org parser and renderer -*- lexical-binding: t; -*-
+;;; prisma-org.el --- Org parser and renderer -*- lexical-binding: t; package-lint-main-file: "prisma.el"; -*-
 ;;
 ;; Copyright (C) 2026 Ag Ibragimov
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -107,23 +107,21 @@ Returns list of model nodes."
                    :source-format 'org)
                   nodes)
             (setq pos (1+ pos))))
-         ;; Plain text character (or unmatched markup char)
+         ;; Plain text character (or unmatched markup char).
+         ;; Always consume at least one char (prevents infinite loop
+         ;; when a markup char like / doesn't form a valid span),
+         ;; then scan to the next markup char or end.
          (t
-          (let ((text-start pos))
-            ;; Always consume at least one char (prevents infinite loop
-            ;; when a markup char like / doesn't form a valid span)
-            (setq pos (1+ pos))
-            ;; Then accumulate consecutive non-markup chars
-            (while (and (< pos len)
-                        (not (memq (aref text pos)
-                                   '(?* ?/ ?~ ?= ?+ ?\[))))
-              (setq pos (1+ pos)))
+          (let* ((text-start pos)
+                 (next-pos (or (string-match "[][*/~=+]" text (1+ pos))
+                               len)))
             (push (prisma-model-text
-                   :value (substring text text-start pos)
+                   :value (substring text text-start next-pos)
                    :start (+ start text-start)
-                   :end (+ start pos)
+                   :end (+ start next-pos)
                    :source-format 'org)
-                  nodes))))))
+                  nodes)
+            (setq pos next-pos))))))
     ;; Merge adjacent text nodes
     (prisma-org--merge-text-nodes (nreverse nodes))))
 
@@ -132,7 +130,7 @@ Returns list of model nodes."
 Returns (POS . END) where END is one past closing delimiter, or nil.
 Follows Org emphasis rules: opening delimiter must be preceded by
 whitespace/BOL/punctuation, closing delimiter must be followed by
-whitespace/EOL/punctuation. Content must not start or end with space."
+whitespace/EOL/punctuation.  Content must not start or end with space."
   (when (and (< (1+ pos) len)
              (= (aref text pos) delimiter)
              ;; Pre-condition: BOL or preceded by whitespace/punctuation
@@ -142,25 +140,18 @@ whitespace/EOL/punctuation. Content must not start or end with space."
                        (memq prev '(?\( ?\[ ?\{ ?\" ?' ?- ?.)))))
              ;; Content must not start with space
              (not (= (aref text (1+ pos)) ?\s)))
-    (let ((i (1+ pos))
-          (found nil))
-      (while (and (< i len) (not found))
-        (if (= (aref text i) delimiter)
-            ;; Found the delimiter char - check closing conditions
-            (if (and ;; Content must not end with space
-                     (not (= (aref text (1- i)) ?\s))
-                     ;; Post-condition: EOL or followed by whitespace/punctuation
-                     (or (= (1+ i) len)
-                         (let ((next (aref text (1+ i))))
-                           (or (memq next '(?\s ?\t ?\n))
-                               (memq next '(?\) ?\] ?\} ?\" ?' ?- ?. ?, ?\; ?:))))))
-                ;; Valid closing delimiter
-                (setq found (1+ i))
-              ;; Delimiter char inside content - not valid emphasis
-              (setq i len))
-          (setq i (1+ i))))
-      (when found
-        (cons pos found)))))
+    (cl-loop for i from (1+ pos) below len
+             when (= (aref text i) delimiter)
+             return (when (and ;; Content must not end with space
+                           (/= (aref text (1- i)) ?\s)
+                           ;; Post-condition: EOL or followed by
+                           ;; whitespace/punctuation
+                           (or (= (1+ i) len)
+                               (memq (aref text (1+ i))
+                                     '(?\s ?\t ?\n
+                                       ?\) ?\] ?\} ?\" ?' ?- ?.
+                                       ?, ?\; ?:))))
+                      (cons pos (1+ i))))))
 
 (defun prisma-org--parse-bracket-link (text pos len start)
   "Parse Org bracket link at POS in TEXT.
@@ -234,15 +225,34 @@ Returns (node . end-pos) or nil."
     ;; overshoot by 1 on the last block (counting a \n that isn't there)
     (dolist (block blocks)
       (when (and (prisma-model-end block)
-                 (> (prisma-model-end block) len))
+                 (< len (prisma-model-end block)))
         (plist-put block :end len)))
     (prisma-model-document
      :start 0 :end len
      :source-format 'org
      :children blocks)))
 
+(defun prisma-org--collect-block-body (lines start-i cur-pos end-regex)
+  "Collect body lines from LINES at START-I (byte CUR-POS) until END-REGEX matches.
+The matching line (compared against its downcase) is consumed but not
+included in the body.  Returns plist (:body BODY-LINES :end-i I :end-pos POS).
+If END-REGEX never matches, BODY-LINES is everything to end of LINES."
+  (cl-loop with pos = cur-pos
+           with body = nil
+           for i from start-i below (length lines)
+           for bline = (nth i lines)
+           if (string-match end-regex (downcase bline))
+             return (list :body (nreverse body)
+                          :end-i (1+ i)
+                          :end-pos (+ pos (length bline) 1))
+           else do (push bline body)
+                   (setq pos (+ pos (length bline) 1))
+           finally return (list :body (nreverse body)
+                                :end-i i
+                                :end-pos pos)))
+
 (defun prisma-org--parse-blocks (lines pos)
-  "Parse LINES into block-level model nodes. POS is byte offset."
+  "Parse LINES into block-level model nodes.  POS is byte offset."
   (let ((result nil)
         (i 0)
         (nlines (length lines))
@@ -278,60 +288,42 @@ Returns (node . end-pos) or nil."
                         (downcase line))
           (let* ((lang (match-string 1 (downcase line)))
                  (block-start cur-pos)
-                 (body-lines nil)
-                 (found-end nil))
-            ;; Advance past the begin line
-            (setq cur-pos (+ cur-pos (length line) 1))
-            (setq i (1+ i))
-            ;; Collect body lines until #+end_src
-            (while (and (< i nlines) (not found-end))
-              (let ((bline (nth i lines)))
-                (if (string-match "^#\\+end_src" (downcase bline))
-                    (progn
-                      (setq found-end t)
-                      (setq cur-pos (+ cur-pos (length bline) 1))
-                      (setq i (1+ i)))
-                  (push bline body-lines)
-                  (setq cur-pos (+ cur-pos (length bline) 1))
-                  (setq i (1+ i)))))
-            (let ((body (if body-lines
-                            (concat (mapconcat #'identity
-                                               (nreverse body-lines) "\n")
-                                    "\n")
-                          "")))
-              (push (prisma-model-code-block
-                     :language (when (and lang (not (string-empty-p lang)))
-                                 lang)
-                     :body body
-                     :start block-start :end cur-pos
-                     :source-format 'org)
-                    result))))
+                 (after-begin-pos (+ cur-pos (length line) 1))
+                 (collected (prisma-org--collect-block-body
+                             lines (1+ i) after-begin-pos
+                             "^#\\+end_src"))
+                 (body-lines (plist-get collected :body))
+                 (body (if body-lines
+                           (concat (mapconcat #'identity body-lines "\n")
+                                   "\n")
+                         "")))
+            (setq i (plist-get collected :end-i))
+            (setq cur-pos (plist-get collected :end-pos))
+            (push (prisma-model-code-block
+                   :language (when (and lang (not (string-empty-p lang)))
+                               lang)
+                   :body body
+                   :start block-start :end cur-pos
+                   :source-format 'org)
+                  result)))
 
          ;; Blockquote: #+begin_quote ... #+end_quote
          ((string-match "^#\\+begin_quote" (downcase line))
           (let* ((block-start cur-pos)
-                 (inner-lines nil)
-                 (found-end nil))
-            (setq cur-pos (+ cur-pos (length line) 1))
-            (setq i (1+ i))
-            (while (and (< i nlines) (not found-end))
-              (let ((bline (nth i lines)))
-                (if (string-match "^#\\+end_quote" (downcase bline))
-                    (progn
-                      (setq found-end t)
-                      (setq cur-pos (+ cur-pos (length bline) 1))
-                      (setq i (1+ i)))
-                  (push bline inner-lines)
-                  (setq cur-pos (+ cur-pos (length bline) 1))
-                  (setq i (1+ i)))))
-            (let* ((inner-blocks (prisma-org--parse-blocks
-                                  (nreverse inner-lines)
-                                  (+ block-start (length line) 1))))
-              (push (prisma-model-blockquote
-                     :children inner-blocks
-                     :start block-start :end cur-pos
-                     :source-format 'org)
-                    result))))
+                 (after-begin-pos (+ cur-pos (length line) 1))
+                 (collected (prisma-org--collect-block-body
+                             lines (1+ i) after-begin-pos
+                             "^#\\+end_quote"))
+                 (inner-blocks (prisma-org--parse-blocks
+                                (plist-get collected :body)
+                                after-begin-pos)))
+            (setq i (plist-get collected :end-i))
+            (setq cur-pos (plist-get collected :end-pos))
+            (push (prisma-model-blockquote
+                   :children inner-blocks
+                   :start block-start :end cur-pos
+                   :source-format 'org)
+                  result)))
 
          ;; Table: | ... | lines (passthrough)
          ((string-match "^|" line)
@@ -363,18 +355,19 @@ Returns (node . end-pos) or nil."
 
          ;; List: - item or N. item
          ((string-match "^\\(?:- \\|[0-9]+\\. \\)" line)
-          (let* ((list-result (prisma-org--parse-list lines i cur-pos)))
-            (push (car list-result) result)
-            (setq i (cadr list-result))
-            (setq cur-pos (caddr list-result))))
+          (pcase-let ((`(,node ,next-i ,next-pos)
+                       (prisma-org--parse-list lines i cur-pos)))
+            (push node result)
+            (setq i next-i)
+            (setq cur-pos next-pos)))
 
          ;; Paragraph: anything else
          (t
-          (let* ((para-result (prisma-org--parse-paragraph
-                               lines i cur-pos)))
-            (push (car para-result) result)
-            (setq i (cadr para-result))
-            (setq cur-pos (caddr para-result)))))))
+          (pcase-let ((`(,node ,next-i ,next-pos)
+                       (prisma-org--parse-paragraph lines i cur-pos)))
+            (push node result)
+            (setq i next-i)
+            (setq cur-pos next-pos))))))
     (nreverse result)))
 
 (defun prisma-org--parse-list (lines start-i pos)
@@ -514,16 +507,7 @@ Returns (paragraph-node next-i next-pos)."
 
 (defun prisma-org--render-blocks (nodes)
   "Render block-level NODES with proper inter-block spacing."
-  (let (parts)
-    (dolist (node nodes)
-      (let ((rendered (prisma-org--render-node node)))
-        (when (and parts (not (string-empty-p rendered)))
-          (let ((prev (car parts)))
-            ;; Don't double up newlines
-            (unless (string-suffix-p "\n\n" prev)
-              (push "\n\n" parts))))
-        (push rendered parts)))
-    (apply #'concat (nreverse parts))))
+  (prisma-model-render-blocks nodes #'prisma-org--render-node))
 
 (defun prisma-org--render-children (node)
   "Render children of NODE concatenated."
@@ -541,7 +525,9 @@ Returns (paragraph-node next-i next-pos)."
                items "\n")))
 
 (defun prisma-org--render-list-item (node ordered &optional idx)
-  "Render a list-item NODE to Org."
+  "Render a list-item NODE to Org.
+ORDERED non-nil emits an ordered marker using IDX (defaulting to 1);
+otherwise emits an unordered \"- \" marker."
   (let ((marker (if ordered (format "%d. " (or idx 1)) "- "))
         (checkbox (prisma-model-prop node :checkbox))
         (content (prisma-org--render-children node)))

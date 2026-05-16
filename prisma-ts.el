@@ -1,4 +1,4 @@
-;;; prisma-ts.el --- Tree-sitter parser integration -*- lexical-binding: t; -*-
+;;; prisma-ts.el --- Tree-sitter parser integration -*- lexical-binding: t; package-lint-main-file: "prisma.el"; -*-
 ;;
 ;; Copyright (C) 2026 Ag Ibragimov
 ;; SPDX-License-Identifier: GPL-3.0-or-later

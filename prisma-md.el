@@ -1,4 +1,4 @@
-;;; prisma-md.el --- Markdown parser and renderer -*- lexical-binding: t; -*-
+;;; prisma-md.el --- Markdown parser and renderer -*- lexical-binding: t; package-lint-main-file: "prisma.el"; -*-
 ;;
 ;; Copyright (C) 2026 Ag Ibragimov
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -76,7 +76,9 @@ Returns AST with 0-based string positions (matching TEXT indices)."
                  "pipe_table")))
 
 (defun prisma-md--process-block-children (parent inline-root text)
-  "Process named children of PARENT, unwrapping sections transparently."
+  "Process named children of PARENT, unwrapping sections transparently.
+INLINE-ROOT is the inline tree-sitter root.  TEXT is the buffer text
+\(NUL-prefixed so positions are 1-based)."
   (let (result)
     (dolist (child (treesit-node-children parent t))
       (let ((type (treesit-node-type child)))
@@ -91,7 +93,8 @@ Returns AST with 0-based string positions (matching TEXT indices)."
     (nreverse result)))
 
 (defun prisma-md--process-block (node inline-root text)
-  "Convert a block-level treesit NODE to a model node."
+  "Convert a block-level treesit NODE to a model node.
+INLINE-ROOT is the inline tree-sitter root; TEXT is the source string."
   (let ((type (treesit-node-type node))
         (start (treesit-node-start node))
         (end (treesit-node-end node)))
@@ -114,39 +117,42 @@ Returns AST with 0-based string positions (matching TEXT indices)."
         :text (string-trim-right (substring text start end) "\n")
         :start start :end end :source-format 'markdown)))))
 
+(defun prisma-md--inline-children (node inline-root text)
+  "Return inline children list parsed from NODE's \"inline\" child, or nil.
+INLINE-ROOT is the inline tree-sitter root; TEXT is the source string."
+  (when-let* ((inline-node (prisma-ts-child-by-type node "inline")))
+    (prisma-md--process-inlines inline-node inline-root text)))
+
+(defun prisma-md--heading-level (node)
+  "Return heading level (1-6) for an atx_heading NODE."
+  (if-let* ((marker (treesit-node-child node 0))
+            (mtype (treesit-node-type marker))
+            (_ (string-match "atx_h\\([1-6]\\)_marker" mtype)))
+      (string-to-number (match-string 1 mtype))
+    1))
+
 (defun prisma-md--process-heading (node inline-root text)
-  "Process an atx_heading NODE."
-  (let* ((start (treesit-node-start node))
-         (end (treesit-node-end node))
-         (marker (treesit-node-child node 0))
-         (level (if marker
-                    (let ((mtype (treesit-node-type marker)))
-                      (if (string-match "atx_h\\([1-6]\\)_marker" mtype)
-                          (string-to-number (match-string 1 mtype))
-                        1))
-                  1))
-         (inline-node (prisma-ts-child-by-type node "inline"))
-         (children (when inline-node
-                     (prisma-md--process-inlines
-                      inline-node inline-root text))))
-    (prisma-model-heading
-     :level level :children children
-     :start start :end end :source-format 'markdown)))
+  "Process an atx_heading NODE.
+INLINE-ROOT and TEXT are forwarded to inline parsing."
+  (prisma-model-heading
+   :level (prisma-md--heading-level node)
+   :children (prisma-md--inline-children node inline-root text)
+   :start (treesit-node-start node)
+   :end (treesit-node-end node)
+   :source-format 'markdown))
 
 (defun prisma-md--process-paragraph (node inline-root text)
-  "Process a paragraph NODE."
-  (let* ((start (treesit-node-start node))
-         (end (treesit-node-end node))
-         (inline-node (prisma-ts-child-by-type node "inline"))
-         (children (when inline-node
-                     (prisma-md--process-inlines
-                      inline-node inline-root text))))
-    (prisma-model-paragraph
-     :children children
-     :start start :end end :source-format 'markdown)))
+  "Process a paragraph NODE.
+INLINE-ROOT and TEXT are forwarded to inline parsing."
+  (prisma-model-paragraph
+   :children (prisma-md--inline-children node inline-root text)
+   :start (treesit-node-start node)
+   :end (treesit-node-end node)
+   :source-format 'markdown))
 
 (defun prisma-md--process-list (node inline-root text)
-  "Process a list NODE."
+  "Process a list NODE.
+INLINE-ROOT and TEXT are forwarded to inline parsing."
   (let* ((start (treesit-node-start node))
          (end (treesit-node-end node))
          (items (prisma-ts-children-by-type node "list_item"))
@@ -161,25 +167,23 @@ Returns AST with 0-based string positions (matching TEXT indices)."
      :ordered ordered :children children
      :start start :end end :source-format 'markdown)))
 
+(defun prisma-md--list-item-checkbox (node)
+  "Return checkbox state for NODE: `checked', `unchecked', or nil."
+  (cond ((prisma-ts-child-by-type node "task_list_marker_checked")
+         'checked)
+        ((prisma-ts-child-by-type node "task_list_marker_unchecked")
+         'unchecked)))
+
 (defun prisma-md--process-list-item (node inline-root text)
-  "Process a list_item NODE."
-  (let* ((start (treesit-node-start node))
-         (end (treesit-node-end node))
-         (checked (prisma-ts-child-by-type
-                   node "task_list_marker_checked"))
-         (unchecked (prisma-ts-child-by-type
-                     node "task_list_marker_unchecked"))
-         (checkbox (cond (checked 'checked)
-                         (unchecked 'unchecked)))
-         (para (prisma-ts-child-by-type node "paragraph"))
-         (inline-node (when para
-                        (prisma-ts-child-by-type para "inline")))
-         (children (when inline-node
-                     (prisma-md--process-inlines
-                      inline-node inline-root text))))
-    (prisma-model-list-item
-     :checkbox checkbox :children children
-     :start start :end end :source-format 'markdown)))
+  "Process a list_item NODE.
+INLINE-ROOT and TEXT are forwarded to inline parsing."
+  (prisma-model-list-item
+   :checkbox (prisma-md--list-item-checkbox node)
+   :children (when-let* ((para (prisma-ts-child-by-type node "paragraph")))
+               (prisma-md--inline-children para inline-root text))
+   :start (treesit-node-start node)
+   :end (treesit-node-end node)
+   :source-format 'markdown))
 
 (defun prisma-md--process-code-block (node _text)
   "Process a fenced_code_block NODE."
@@ -208,7 +212,8 @@ Returns AST with 0-based string positions (matching TEXT indices)."
      :start start :end end :source-format 'markdown)))
 
 (defun prisma-md--process-blockquote (node inline-root text)
-  "Process a block_quote NODE."
+  "Process a block_quote NODE.
+INLINE-ROOT and TEXT are forwarded to inline parsing."
   (let* ((start (treesit-node-start node))
          (end (treesit-node-end node))
          (content-children
@@ -230,14 +235,16 @@ Returns AST with 0-based string positions (matching TEXT indices)."
 
 (defun prisma-md--process-inlines (inline-node inline-root text)
   "Build inline model nodes from INLINE-NODE's byte range.
-Uses INLINE-ROOT to find structural inline elements, fills gaps with text."
+Uses INLINE-ROOT to find structural inline elements, filling gaps with
+text nodes drawn from TEXT."
   (let* ((start (treesit-node-start inline-node))
          (end (treesit-node-end inline-node))
          (nodes (prisma-ts-nodes-in-range inline-root start end)))
     (prisma-md--fill-text-gaps nodes start end text)))
 
 (defun prisma-md--fill-text-gaps (nodes start end text)
-  "Build inline children list, creating text nodes for gaps between NODES."
+  "Build inline children list, creating text nodes for gaps between NODES.
+START and END bound the source byte range to fill; TEXT supplies bytes."
   (let ((result nil)
         (pos start)
         (sorted (sort (copy-sequence nodes)
@@ -247,14 +254,14 @@ Uses INLINE-ROOT to find structural inline elements, fills gaps with text."
     (dolist (node sorted)
       (let ((ns (treesit-node-start node))
             (ne (treesit-node-end node)))
-        (when (> ns pos)
+        (when (< pos ns)
           (push (prisma-model-text
                  :value (substring text pos ns)
                  :start pos :end ns :source-format 'markdown)
                 result))
         (push (prisma-md--process-inline-node node text) result)
         (setq pos ne)))
-    (when (> end pos)
+    (when (< pos end)
       (push (prisma-model-text
              :value (substring text pos end)
              :start pos :end end :source-format 'markdown)
@@ -262,7 +269,8 @@ Uses INLINE-ROOT to find structural inline elements, fills gaps with text."
     (nreverse result)))
 
 (defun prisma-md--process-inline-node (node text)
-  "Convert an inline treesit NODE to a model node."
+  "Convert an inline treesit NODE to a model node.
+TEXT supplies bytes for nodes that extract value from their byte range."
   (let ((type (treesit-node-type node))
         (start (treesit-node-start node))
         (end (treesit-node-end node)))
@@ -317,27 +325,22 @@ Uses INLINE-ROOT to find structural inline elements, fills gaps with text."
         :start start :end end :source-format 'markdown)))))
 
 (defun prisma-md--process-emphasis (node text kind)
-  "Process strong_emphasis or emphasis NODE into KIND model node."
+  "Process strong_emphasis or emphasis NODE into KIND model node.
+KIND is `strong' or `emphasis'.  TEXT supplies inline source bytes."
   (let* ((start (treesit-node-start node))
          (end (treesit-node-end node))
          (range (prisma-ts-content-range node "emphasis_delimiter"))
          (cs (if range (car range) start))
          (ce (if range (cdr range) end))
-         (nested (seq-filter
+         (nested (seq-remove
                   (lambda (c)
-                    (not (string= (treesit-node-type c)
-                                  "emphasis_delimiter")))
+                    (string= (treesit-node-type c) "emphasis_delimiter"))
                   (treesit-node-children node)))
          (children (prisma-md--fill-text-gaps nested cs ce text)))
-    (pcase kind
-      ('strong
-       (prisma-model-strong
-        :children children
-        :start start :end end :source-format 'markdown))
-      ('emphasis
-       (prisma-model-emphasis
-        :children children
-        :start start :end end :source-format 'markdown)))))
+    (prisma-model-node kind
+                       :children children
+                       :start start :end end
+                       :source-format 'markdown)))
 
 ;;;; Renderer - public API
 
@@ -391,15 +394,7 @@ Uses INLINE-ROOT to find structural inline elements, fills gaps with text."
 
 (defun prisma-md--render-blocks (nodes)
   "Render block-level NODES with proper inter-block spacing."
-  (let (parts)
-    (dolist (node nodes)
-      (let ((rendered (prisma-md--render-node node)))
-        (when (and parts (not (string-empty-p rendered)))
-          (let ((prev (car parts)))
-            (unless (string-suffix-p "\n\n" prev)
-              (push "\n\n" parts))))
-        (push rendered parts)))
-    (apply #'concat (nreverse parts))))
+  (prisma-model-render-blocks nodes #'prisma-md--render-node))
 
 (defun prisma-md--render-children (node)
   "Render children of NODE concatenated."
@@ -430,3 +425,4 @@ Uses INLINE-ROOT to find structural inline elements, fills gaps with text."
 
 (provide 'prisma-md)
 ;;; prisma-md.el ends here
+

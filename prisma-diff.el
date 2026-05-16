@@ -1,10 +1,10 @@
-;;; prisma-diff.el --- AST diff algorithm -*- lexical-binding: t; -*-
+;;; prisma-diff.el --- AST diff algorithm -*- lexical-binding: t; package-lint-main-file: "prisma.el"; -*-
 ;;
 ;; Copyright (C) 2026 Ag Ibragimov
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
 ;;; Commentary:
-;; Structural diff on the intermediary AST model. Compares two ASTs
+;; Structural diff on the intermediary AST model.  Compares two ASTs
 ;; and classifies children as unchanged, modified, inserted, or deleted.
 ;; Uses content hashing for fast equality and order-preserving greedy
 ;; matching.
@@ -19,7 +19,7 @@
 (defun prisma-diff-ast (ast1 ast2)
   "Structural diff between AST1 and AST2.
 Compares child node lists and classifies each as unchanged, modified,
-inserted, or deleted. Returns a plist:
+inserted, or deleted.  Return a plist:
   :unchanged - list of (ast1-node . ast2-node) pairs
   :modified  - list of (ast1-node . ast2-node) pairs
   :inserted  - list of ast2-nodes
@@ -31,7 +31,7 @@ inserted, or deleted. Returns a plist:
 ;;;; Internal matching
 
 (defun prisma-diff--children (nodes1 nodes2)
-  "Match and classify two lists of sibling nodes."
+  "Match and classify two lists of sibling nodes (NODES1 vs NODES2)."
   (let* ((vec1 (vconcat nodes1))
          (vec2 (vconcat nodes2))
          (len1 (length vec1))
@@ -72,14 +72,16 @@ inserted, or deleted. Returns a plist:
     (prisma-diff--build-result vec1 vec2 used1 used2 (nreverse matches))))
 
 (defun prisma-diff--hash-vec (vec)
-  "Compute content hashes for all nodes in VEC.  Returns a hash vector."
+  "Compute content hashes for all nodes in VEC.  Return a hash vector."
   (let ((hashes (make-vector (length vec) nil)))
     (dotimes (i (length vec))
       (aset hashes i (prisma-model-content-hash (aref vec i))))
     hashes))
 
 (defun prisma-diff--build-result (vec1 vec2 used1 used2 matches)
-  "Build diff result plist from matching data."
+  "Build diff result plist from matching data.
+VEC1 and VEC2 are the children vectors; USED1 and USED2 mark consumed
+indices; MATCHES is the list of (i j tag) entries from matching passes."
   (let (unchanged modified deleted inserted)
     (dolist (m matches)
       (let ((node1 (aref vec1 (nth 0 m)))

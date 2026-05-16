@@ -6,16 +6,16 @@ EMACS_BATCH = emacs -Q --batch \
 	--eval "(add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\"))" \
 	--eval "(package-initialize)"
 
-.PHONY: help test test-e2e test-live deps check-autoloads check-compile compile clean
+.PHONY: help test test-e2e deps check-autoloads check-compile compile clean
 
 help:
 	@echo "Available commands:"
 	@echo "  make deps              Install dependencies"
 	@echo "  make test              Run unit tests"
+	@echo "  make test-e2e          Run end-to-end tests"
 	@echo "  make compile           Byte-compile the package"
 	@echo "  make check-autoloads   Generate and load autoloads"
 	@echo "  make check-compile     Check for clean byte-compilation"
-	@echo "  make test-live         Run E2E tests via emacsclient"
 	@echo "  make clean             Remove compiled files"
 
 $(ELPA_DIR):
@@ -31,9 +31,7 @@ test: $(ELPA_DIR)
 	$(EMACS_BATCH) --directory . \
 	--eval "(setq buttercup-stack-frame-style 'omit)" \
 	-l test/prisma-tests.el \
-	-l test/prisma-peg-tests.el \
 	-l test/prisma-diff-tests.el \
-	-l test/prisma-patch-tests.el \
 	-l test/prisma-org-tests.el \
 	-l test/prisma-text-diff-tests.el \
 	--funcall buttercup-run
@@ -43,9 +41,7 @@ test-e2e: $(ELPA_DIR)
 	--eval "(dolist (d '(\"$(HOME)/.emacs.d/.local/cache/tree-sitter\" \"$(HOME)/.emacs.d/tree-sitter\")) (when (file-directory-p d) (push d treesit-extra-load-path)))" \
 	--eval "(setq buttercup-stack-frame-style 'omit)" \
 	-l test/prisma-tests.el \
-	-l test/prisma-peg-tests.el \
 	-l test/prisma-diff-tests.el \
-	-l test/prisma-patch-tests.el \
 	-l test/prisma-org-tests.el \
 	-l test/prisma-md-tests.el \
 	-l test/prisma-text-diff-tests.el \
@@ -64,7 +60,7 @@ check-autoloads:
 	--eval "(update-directory-autoloads \"$(CURDIR)\")" \
 	--eval "(load generated-autoload-file nil 'nomessage)"
 
-SRCS = prisma.el prisma-model.el prisma-peg.el prisma-diff.el prisma-patch.el prisma-ts.el prisma-md.el prisma-org.el
+SRCS = prisma.el prisma-model.el prisma-diff.el prisma-ts.el prisma-md.el prisma-org.el
 
 check-compile: $(ELPA_DIR) check-autoloads
 	@echo "Checking byte-compilation..."

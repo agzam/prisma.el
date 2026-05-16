@@ -124,7 +124,7 @@ FORMAT is a symbol: `markdown', `org'."
     ('org
      (require 'prisma-org)
      (prisma-org-parse text))
-    (_ (error "prisma: unsupported parse format: %s" format))))
+    (_ (error "Prisma: unsupported parse format: %s" format))))
 
 (defun prisma-render (format ast)
   "Render AST to FORMAT, return string.
@@ -136,7 +136,7 @@ FORMAT is a symbol: `org', `markdown'."
     ('markdown
      (require 'prisma-md)
      (prisma-md-render ast))
-    (_ (error "prisma: unsupported render format: %s" format))))
+    (_ (error "Prisma: unsupported render format: %s" format))))
 
 ;;;; Render with map
 
@@ -174,23 +174,21 @@ RENDER-MAP is a list of (INDEX SOURCE-NODE MIRROR-START MIRROR-END)."
     ('markdown
      (require 'prisma-md)
      (prisma-md--render-node node))
-    (_ (error "prisma: unsupported render format: %s" format))))
+    (_ (error "Prisma: unsupported render format: %s" format))))
 
 ;;;; Unified commit: re-parse + property-matching
 
 (defun prisma--scan-property-intervals ()
   "Scan current buffer for `prisma-node-idx' property intervals.
-Returns list of (BUF-START BUF-END NODE-IDX-OR-NIL)."
-  (let ((segments nil)
-        (pos (point-min)))
-    (while (< pos (point-max))
-      (let ((cur (get-text-property pos 'prisma-node-idx))
-            (next (or (next-single-property-change
-                       pos 'prisma-node-idx)
-                      (point-max))))
-        (push (list pos next cur) segments)
-        (setq pos next)))
-    (nreverse segments)))
+Return list of (BUF-START BUF-END NODE-IDX-OR-NIL)."
+  (cl-loop with pos = (point-min)
+           while (< pos (point-max))
+           for next = (or (next-single-property-change
+                           pos 'prisma-node-idx)
+                          (point-max))
+           collect (list pos next
+                         (get-text-property pos 'prisma-node-idx))
+           do (setq pos next)))
 
 (defun prisma--match-nodes (new-children _mirror-text segments
                                              &optional num-old-nodes)
@@ -219,7 +217,7 @@ the old node-idx (integer) if matched, or nil."
               (let ((ss (nth 0 seg))
                     (se (nth 1 seg))
                     (si (nth 2 seg)))
-                (when (and si (< ss buf-e) (> se buf-s))
+                (when (and si (< ss buf-e) (< buf-s se))
                   (cl-pushnew si idx-set))))
             ;; Single unique idx -> candidate
             (when (= (length idx-set) 1)
@@ -262,7 +260,7 @@ the old node-idx (integer) if matched, or nil."
                 (cl-loop for i from 0 below n
                          for v = (aref candidate i)
                          while mono
-                         do (if (and v (> v prev))
+                         do (if (and v (< prev v))
                                 (setq prev v)
                               (when (and v (<= v prev))
                                 (setq mono nil))))
@@ -280,22 +278,22 @@ original - the edit preserved document structure."
 
 (defun prisma--patchable-p (matches num-old-nodes
                                        new-children new-mirror mirror-texts)
-  "Return t when MATCHES allows safe in-place patching.
-For near-same-structure cases (parser round-trip node-count drift):
-monotonic non-nil entries, no deletions, high coverage, and unmatched
-new children are parser artifacts (not user-added content).
-NEW-CHILDREN, NEW-MIRROR, and MIRROR-TEXTS are needed to inspect
-unmatched nodes."
+  "Return t when MATCHES allow safe in-place patching.
+NUM-OLD-NODES is the original node count.  For near-same-structure
+cases (parser round-trip node-count drift): monotonic non-nil entries,
+no deletions, high coverage, and unmatched new children are parser
+artifacts (not user-added content).  NEW-CHILDREN, NEW-MIRROR, and
+MIRROR-TEXTS are needed to inspect unmatched nodes."
   (let ((n (length matches))
         (prev -1) (matched 0) (ok t))
     (cl-loop for i from 0 below n
              for v = (aref matches i)
              while ok
-             when v do (if (> v prev)
+             when v do (if (< prev v)
                            (progn (setq prev v) (cl-incf matched))
                          (setq ok nil)))
     (and ok
-         (> matched 0)
+         (< 0 matched)
          ;; No deletions: at least as many new children as old nodes
          (>= n num-old-nodes)
          ;; High coverage: nearly all old nodes matched
@@ -333,11 +331,14 @@ unmatched nodes."
     (source-text render-map matches new-children new-mirror
      mirror-texts source-fmt target-fmt)
   "Patch SOURCE-TEXT in place, replacing only changed byte ranges.
-For patchable edits (monotonic matches) each matched new node maps
-to an original.  Only nodes whose mirror text changed get re-rendered
-and spliced into SOURCE-TEXT at the original byte range.  Unmatched
-new-children (nil in MATCHES) are skipped - they have no source byte
-range.  Everything else stays byte-identical."
+For patchable edits (monotonic matches) each matched new node maps to
+an original from RENDER-MAP.  Only nodes whose mirror text changed get
+re-rendered and spliced into SOURCE-TEXT at the original byte range.
+Unmatched new-children (nil in MATCHES) are skipped - they have no
+source byte range.  Everything else stays byte-identical.
+NEW-CHILDREN comes from re-parsing NEW-MIRROR; the per-node texts of
+the original mirror are in MIRROR-TEXTS.  SOURCE-FMT and TARGET-FMT
+are the round-trip formats."
   (let ((ops nil))
     (cl-loop
      for node in new-children
@@ -369,7 +370,7 @@ range.  Everything else stays byte-identical."
                               orig-trail))))
               (push (list src-start src-end adjusted) ops)))))
     ;; Apply in reverse position order so earlier offsets stay valid
-    (setq ops (sort ops (lambda (a b) (> (car a) (car b)))))
+    (setq ops (sort ops (lambda (a b) (< (car b) (car a)))))
     (let ((result source-text))
       (dolist (op ops)
         (let ((s (nth 0 op))
@@ -385,14 +386,14 @@ range.  Everything else stays byte-identical."
      source-texts mirror-texts source-fmt target-fmt
      &optional source-text render-map)
   "Build complete replacement source text via the unified algorithm.
-For each node in NEW-CHILDREN: if it matches an old node and its
-mirror text is unchanged, emit the original source bytes (perfect
-fidelity).  Otherwise re-parse the mirror text and render to source
-format.
+For each node in NEW-CHILDREN: if it MATCHES an old node and its byte
+range in MIRROR-TEXT is unchanged (compared against MIRROR-TEXTS),
+emit the original source bytes from SOURCE-TEXTS (perfect fidelity).
+Otherwise re-parse the slice of MIRROR-TEXT for that node and render
+to source format (round-trip TARGET-FMT -> SOURCE-FMT).
 When SOURCE-TEXT and RENDER-MAP are provided, inter-block whitespace
 from the original source is preserved between consecutive matched
-unchanged nodes.
-Returns the assembled source string."
+unchanged nodes.  Return the assembled source string."
   (let (parts)
     (cl-loop
      for node in new-children
@@ -470,8 +471,8 @@ Returns the assembled source string."
 ;;;; Cursor position mapping
 
 (defun prisma--find-node-at-pos (pos children)
-  "Find the top-level node in CHILDREN whose range contains POS.
-Returns (INDEX . NODE) or nil."
+  "Find the top-level node in CHILDREN whose range covers POS.
+Return (INDEX . NODE) or nil."
   (cl-loop for node in children
            for i from 0
            when (and (prisma-model-start node)
@@ -516,10 +517,10 @@ When a region is active, converts only the selected region."
   (interactive)
   (let* ((source-buf (current-buffer))
          (source-fmt (or (prisma--detect-source-format)
-                         (error "prisma: cannot detect source format")))
+                         (error "Prisma: cannot detect source format")))
          (target-fmt (or target-format
                          (prisma--target-for-source source-fmt)
-                         (error "prisma: no target for %s" source-fmt)))
+                         (error "Prisma: no target for %s" source-fmt)))
          (region-active (use-region-p))
          (region-beg (when region-active (region-beginning)))
          (region-end (when region-active (region-end)))
@@ -594,7 +595,7 @@ When a region is active, converts only the selected region."
 (defvar prisma-mirror-mode)            ; defined by define-minor-mode below
 
 (defvar prisma--skip-kill-confirm nil
-  "When non-nil, skip kill-buffer confirmation in mirror mode.")
+  "When non-nil, skip `kill-buffer' confirmation in mirror mode.")
 
 (defun prisma-commit ()
   "Commit mirror edits back to source via unified re-parse + property-match.
@@ -602,7 +603,7 @@ Re-parses the entire mirror, matches new AST nodes to originals via
 text properties, emits original source bytes for unchanged nodes."
   (interactive)
   (unless prisma-mirror-mode
-    (error "prisma: not in a mirror buffer"))
+    (error "Prisma: not in a mirror buffer"))
   (let* ((source-buf prisma--source-buffer)
          (source-ast prisma--source-ast)
          (source-fmt prisma--source-format)
@@ -628,11 +629,11 @@ text properties, emits original source bytes for unchanged nodes."
                               render-map)
                       (prisma-model-children source-ast))))
     (unless (buffer-live-p source-buf)
-      (error "prisma: source buffer no longer exists"))
+      (error "Prisma: source buffer no longer exists"))
     (when (and source-tick
                (/= source-tick (buffer-modified-tick source-buf)))
       (unless (yes-or-no-p
-               "Source buffer was modified since conversion. Commit anyway? ")
+               "Source buffer was modified since conversion.  Commit anyway? ")
         (user-error "Commit cancelled")))
     (if (string= old-mirror new-mirror)
         ;; No changes: return to source
@@ -681,8 +682,8 @@ text properties, emits original source bytes for unchanged nodes."
         ;; block mirror whitespace was edited)
         (when (and (not same-structure)
                    (string= patched source-text))
-          (error "prisma: edits detected in mirror but patch produced \
-no source changes. Mirror preserved - your edits are safe. \
+          (error "Prisma: edits detected in mirror but patch produced \
+no source changes.  Mirror preserved - your edits are safe.  \
 Please report this as a bug"))
         (with-current-buffer source-buf
           (let ((inhibit-read-only t))
@@ -706,9 +707,9 @@ Please report this as a bug"))
   "Cancel conversion, kill mirror buffer without changing source."
   (interactive)
   (unless prisma-mirror-mode
-    (error "prisma: not in a mirror buffer"))
+    (error "Prisma: not in a mirror buffer"))
   (when (and (buffer-modified-p)
-             (not (yes-or-no-p "Mirror buffer has unsaved changes. Cancel anyway? ")))
+             (not (yes-or-no-p "Mirror buffer has unsaved changes.  Cancel anyway? ")))
     (user-error "Cancel aborted"))
   (let* ((source-buf prisma--source-buffer)
          (source-ast prisma--source-ast)
@@ -732,10 +733,10 @@ Please report this as a bug"))
     (message "prisma: conversion cancelled")))
 
 (defun prisma-diff ()
-  "Preview what changes would be applied to the source buffer."
+  "Display a summary of pending edits against the source buffer."
   (interactive)
   (unless prisma-mirror-mode
-    (error "prisma: not in a mirror buffer"))
+    (error "Prisma: not in a mirror buffer"))
   (let* ((target-fmt prisma--target-format)
          (source-ast prisma--source-ast)
          (mirror-text (buffer-substring-no-properties
@@ -780,8 +781,9 @@ Provides commit/cancel bindings and tracks source buffer linkage."
 
 (defun prisma--key-for (cmd)
   "Return a human-readable key string for CMD in the mirror mode map."
-  (let ((key (where-is-internal cmd prisma-mirror-mode-map t)))
-    (if key (key-description key) "???")))
+  (if-let* ((key (where-is-internal cmd prisma-mirror-mode-map t)))
+      (key-description key)
+    "???"))
 
 (defun prisma--set-header-line ()
   "Set `header-line-format' showing source info and keybindings."
@@ -814,7 +816,7 @@ Provides commit/cancel bindings and tracks source buffer linkage."
   "Warn before killing a modified mirror buffer."
   (or prisma--skip-kill-confirm
       (not (buffer-modified-p))
-      (yes-or-no-p "Mirror buffer has uncommitted changes. Kill anyway? ")))
+      (yes-or-no-p "Mirror buffer has uncommitted changes.  Kill anyway? ")))
 
 (provide 'prisma)
 ;;; prisma.el ends here

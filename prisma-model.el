@@ -1,11 +1,11 @@
-;;; prisma-model.el --- Intermediary AST model -*- lexical-binding: t; -*-
+;;; prisma-model.el --- Intermediary AST model -*- lexical-binding: t; package-lint-main-file: "prisma.el"; -*-
 ;;
 ;; Copyright (C) 2026 Ag Ibragimov
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;
 ;;; Commentary:
 ;; Unified AST node types shared across all parsers, renderers,
-;; and the diff/patch engines. Every node is a plist with :type,
+;; and the diff/patch engines.  Every node is a plist with :type,
 ;; :start, :end, :source-format, :children, and :props.
 ;;
 ;;; Code:
@@ -65,8 +65,8 @@ ARGS accepts :start, :end, :source-format, :children, :props."
 ;;;; Content hashing
 
 (defun prisma-model-content-hash (node)
-  "Compute SHA-1 hash of NODE for fast equality checks.
-Hashes type, props, and children. Excludes positions and source-format
+  "Compute SHA-1 hash of NODE for fast equality check.
+Hashes type, props, and children.  Excludes positions and source-format
 so identical content at different locations produces the same hash."
   (secure-hash 'sha1 (prisma-model--hash-string node)))
 
@@ -93,6 +93,23 @@ Recursively hashes node-valued properties."
                                   (format "%S" v)))
                         parts))
       (mapconcat #'identity (nreverse parts) ","))))
+
+;;;; Rendering helpers
+
+(defun prisma-model-render-blocks (nodes render-fn)
+  "Render block-level NODES to a single string via RENDER-FN.
+RENDER-FN is a function taking one node and returning its rendered
+string.  Consecutive non-empty parts are separated by \"\\n\\n\",
+unless the previous part already ends with two newlines."
+  (let (parts)
+    (dolist (node nodes)
+      (let ((rendered (funcall render-fn node)))
+        (when (and parts
+                   (not (string-empty-p rendered))
+                   (not (string-suffix-p "\n\n" (car parts))))
+          (push "\n\n" parts))
+        (push rendered parts)))
+    (apply #'concat (nreverse parts))))
 
 ;;;; Convenience constructor helpers
 
@@ -152,3 +169,4 @@ Standard keys :start :end :source-format :children are handled automatically."
 
 (provide 'prisma-model)
 ;;; prisma-model.el ends here
+
