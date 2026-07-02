@@ -2,6 +2,9 @@
 
 Same content, different spectrum.
 
+* Status: experimental
+*This is a highly experimental unit, use at your own discretion and risk.* Things may change drastically, or I may decide to scrap the entire idea and re-implement it differently.
+
 * Seamless conversion and editing
 
 Open a Markdown file, run =prisma-convert=, and you're editing in Org mode. Rearrange headings with =org-metaup=, restructure lists, refactor content - use the full power of Org. When done, =C-c C-c= commits your changes back. The source Markdown updates surgically: only the regions you touched change, everything else stays byte-identical.
