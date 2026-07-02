@@ -289,5 +289,30 @@
       (expect md :to-match "\\*\\*bold\\*\\*")
       (expect md :to-match "\\*italic\\*"))))
 
+(describe "Grammar guard"
+
+  (it "signals an actionable error when grammars are missing"
+    (cl-letf (((symbol-function 'treesit-language-available-p)
+               (lambda (_lang) nil)))
+      (let ((err (condition-case e
+                     (prisma-md-parse "# hi\n")
+                   (user-error e))))
+        (expect (car err) :to-be 'user-error)
+        (expect (cadr err) :to-match "markdown, markdown-inline")
+        (expect (cadr err) :to-match "prisma-md-install-grammars"))))
+
+  (it "names only the missing grammar"
+    (cl-letf (((symbol-function 'treesit-language-available-p)
+               (lambda (lang) (eq lang 'markdown))))
+      (let ((err (condition-case e
+                     (prisma-md-parse "# hi\n")
+                   (user-error e))))
+        (expect (car err) :to-be 'user-error)
+        (expect (cadr err) :to-match "markdown-inline")
+        (expect (cadr err) :not :to-match "markdown,"))))
+
+  (it "parses normally when grammars are available"
+    (expect (prisma-md-parse "# hi\n") :not :to-throw)))
+
 (provide 'prisma-md-tests)
 ;;; prisma-md-tests.el ends here

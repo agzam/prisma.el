@@ -1,5 +1,11 @@
 #+TITLE: Changelog
 
+* 1.1.0
+- Grammar guard: a missing tree-sitter grammar now signals a clear, actionable error naming the grammar, instead of an opaque dlopen failure
+- New command: =prisma-md-install-grammars= builds and installs the =markdown= and =markdown-inline= grammars using built-in recipes
+- Batch test runs set =load-prefer-newer=, so stale byte-compiled files can no longer shadow current sources
+- README documents grammar prerequisites, recovery, and the Emacs ABI caveat after major upgrades
+
 * 1.0.0
 - Markdown (GFM) <-> Org bidirectional conversion
 - Intermediary AST model with positioned nodes

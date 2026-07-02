@@ -1,6 +1,7 @@
 ELPA_DIR = $(CURDIR)/.elpa
 
 EMACS_BATCH = emacs -Q --batch \
+	--eval "(setq load-prefer-newer t)" \
 	--eval "(setq package-user-dir \"$(ELPA_DIR)\")" \
 	--eval "(require 'package)" \
 	--eval "(add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\"))" \

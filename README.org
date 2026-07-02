@@ -34,6 +34,8 @@ Region conversion: select a region before converting to work on just a section.
 
 Emacs 29.1+ with tree-sitter support. Compiled grammars for =markdown= and =markdown-inline= (from [[https://github.com/tree-sitter-grammars/tree-sitter-markdown][tree-sitter-grammars/tree-sitter-markdown]]).
 
+Missing grammars are reported with a clear error; =M-x prisma-md-install-grammars= builds and installs both (requires git and a C compiler). Note that grammar libraries are tied to the Emacs tree-sitter ABI - after a major Emacs upgrade you may need to run it again.
+
 * License
 
 GPL-3.0-or-later

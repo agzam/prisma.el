@@ -427,6 +427,7 @@ disagreements to validate against.
 | `prisma-commit`   | mirror buffer | Convert back and patch source          |
 | `prisma-cancel`   | mirror buffer | Discard mirror, no changes to source   |
 | `prisma-diff`     | mirror buffer | Preview what would change in source    |
+| `prisma-md-install-grammars` | anywhere | Install required tree-sitter grammars |
 
 ## Public API
 

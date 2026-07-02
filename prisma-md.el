@@ -13,11 +13,46 @@
 (require 'prisma-model)
 (require 'prisma-ts)
 
+;;;; Grammar availability
+
+(defconst prisma-md--grammar-recipes
+  '((markdown "https://github.com/tree-sitter-grammars/tree-sitter-markdown"
+              "split_parser" "tree-sitter-markdown/src")
+    (markdown-inline "https://github.com/tree-sitter-grammars/tree-sitter-markdown"
+                     "split_parser" "tree-sitter-markdown-inline/src"))
+  "Install recipes for the tree-sitter grammars Prisma requires.
+Both grammars live in one repository; the block and inline parsers
+are built from different subdirectories.")
+
+(defun prisma-md--ensure-grammars ()
+  "Signal a clear error when required tree-sitter grammars are missing.
+Without this check a missing grammar surfaces as an opaque dlopen
+failure from `treesit-parser-create'."
+  (when-let* ((missing (cl-remove-if #'treesit-language-available-p
+                                     '(markdown markdown-inline))))
+    (user-error "Prisma: missing tree-sitter grammar(s): %s.  \
+Run M-x prisma-md-install-grammars"
+                (mapconcat #'symbol-name missing ", "))))
+
+;;;###autoload
+(defun prisma-md-install-grammars ()
+  "Install the tree-sitter grammars required for Markdown parsing.
+Skips grammars that are already available."
+  (interactive)
+  (let ((treesit-language-source-alist
+         (append prisma-md--grammar-recipes
+                 (bound-and-true-p treesit-language-source-alist))))
+    (dolist (lang '(markdown markdown-inline))
+      (unless (treesit-language-available-p lang)
+        (treesit-install-language-grammar lang))))
+  (message "Prisma: markdown grammars ready"))
+
 ;;;; Parser - public API
 
 (defun prisma-md-parse (text)
   "Parse Markdown TEXT and return an intermediary model AST.
 Returns AST with 0-based string positions (matching TEXT indices)."
+  (prisma-md--ensure-grammars)
   (with-temp-buffer
     (insert text)
     (let* ((block-parser (treesit-parser-create 'markdown))
@@ -325,7 +360,8 @@ All other content has stray `|' replaced with `\\|'."
       (replace-regexp-in-string "|" "\\\\|" rendered))))
 
 (defun prisma-md--table-alignments (delimiter-row)
-  "Extract column alignments from a pipe_table_delimiter_row NODE.
+  "Extract column alignments from DELIMITER-ROW.
+DELIMITER-ROW is a pipe_table_delimiter_row tree-sitter node.
 Returns list of `:left', `:right', `:center', or `:default'."
   (cl-loop for cell in (treesit-node-children delimiter-row t)
            when (string= (treesit-node-type cell)

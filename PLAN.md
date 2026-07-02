@@ -39,6 +39,7 @@ The commit flow uses a single unified path:
 - [x] Unit tests for commit primitives
 - [x] Region conversion support
 - [x] Cursor position mapping
+- [x] Grammar availability guard (clear error instead of dlopen noise) + `prisma-md-install-grammars`
 
 ## Remaining work
 
