@@ -1,9 +1,10 @@
 #+TITLE: El Prisma
+[[https://github.com/agzam/prisma.el/actions/workflows/run-tests.yml][https://github.com/agzam/prisma.el/actions/workflows/run-tests.yml/badge.svg]]
 
 Same content, different spectrum.
 
-* Status: experimental
-*This is a highly experimental unit, use at your own discretion and risk.* Things may change drastically, or I may decide to scrap the entire idea and re-implement it differently.
+* Status: experimentally stable
+*This is a somewhat experimental unit, use at your own discretion and risk.* Things may change drastically, or I may decide to scrap the entire idea and re-implement it differently. Personally, I've been using it very successfully, but I'd still advise caution when editing large and very important documents; I cannot guarantee that changing something in one place won't inexplicably move things around in some other parts of the document. This is a fundamentally very difficult problem to solve deterministically - structural diffing of dissimilar formats. Add to this the various, different flavors of markdown and voila! Now you have a jumble.
 
 * Seamless conversion and editing
 
