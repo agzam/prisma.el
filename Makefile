@@ -40,7 +40,7 @@ test: $(ELPA_DIR)
 
 test-e2e: $(ELPA_DIR)
 	$(EMACS_BATCH) --directory . \
-	--eval "(dolist (d '(\"$(HOME)/.emacs.d/.local/cache/tree-sitter\" \"$(HOME)/.emacs.d/tree-sitter\")) (when (file-directory-p d) (push d treesit-extra-load-path)))" \
+	--eval "(dolist (d '(\"$(HOME)/.emacs.d/.local/.cache/tree-sitter\" \"$(HOME)/.emacs.d/.local/cache/tree-sitter\" \"$(HOME)/.emacs.d/tree-sitter\")) (when (file-directory-p d) (push d treesit-extra-load-path)))" \
 	--eval "(setq buttercup-stack-frame-style 'omit)" \
 	-l test/prisma-tests.el \
 	-l test/prisma-diff-tests.el \
