@@ -35,11 +35,12 @@ test: $(ELPA_DIR)
 	-l test/prisma-diff-tests.el \
 	-l test/prisma-org-tests.el \
 	-l test/prisma-text-diff-tests.el \
+	-l test/prisma-yank-tests.el \
 	--funcall buttercup-run
 
 test-e2e: $(ELPA_DIR)
 	$(EMACS_BATCH) --directory . \
-	--eval "(dolist (d '(\"$(HOME)/.emacs.d/.local/cache/tree-sitter\" \"$(HOME)/.emacs.d/tree-sitter\")) (when (file-directory-p d) (push d treesit-extra-load-path)))" \
+	--eval "(dolist (d '(\"$(HOME)/.emacs.d/.local/.cache/tree-sitter\" \"$(HOME)/.emacs.d/.local/cache/tree-sitter\" \"$(HOME)/.emacs.d/tree-sitter\")) (when (file-directory-p d) (push d treesit-extra-load-path)))" \
 	--eval "(setq buttercup-stack-frame-style 'omit)" \
 	-l test/prisma-tests.el \
 	-l test/prisma-diff-tests.el \
@@ -48,6 +49,7 @@ test-e2e: $(ELPA_DIR)
 	-l test/prisma-text-diff-tests.el \
 	-l test/prisma-fixture-tests.el \
 	-l test/prisma-isolation-tests.el \
+	-l test/prisma-yank-tests.el \
 	--funcall buttercup-run
 
 test-live:
@@ -61,7 +63,7 @@ check-autoloads:
 	--eval "(update-directory-autoloads \"$(CURDIR)\")" \
 	--eval "(load generated-autoload-file nil 'nomessage)"
 
-SRCS = prisma.el prisma-model.el prisma-diff.el prisma-ts.el prisma-md.el prisma-org.el
+SRCS = prisma.el prisma-model.el prisma-diff.el prisma-ts.el prisma-md.el prisma-org.el prisma-yank.el
 
 check-compile: $(ELPA_DIR) check-autoloads
 	@echo "Checking byte-compilation..."
