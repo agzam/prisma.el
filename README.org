@@ -33,6 +33,16 @@ C-c C-p C-d              ; preview diff before committing
 
 Region conversion: select a region before converting to work on just a section.
 
+* Copying between formats
+
+#+begin_src emacs-lisp
+(prisma-yank-mode 1)
+#+end_src
+
+A kill remembers the markup format of the buffer it came from. Paste it into a buffer of the other format and it arrives converted - Markdown copied into an Org buffer lands as Org, Org copied into a Markdown buffer lands as Markdown. Kills from anywhere else, and pastes into anything but Org and Markdown, are untouched.
+
+It works on the kill ring itself, so =yank=, =yank-pop= and Evil's =p= and =P= all go through it. A bare =C-u= before the paste inserts the kill unchanged; so does binding =prisma-yank-inhibit= around a paste. If conversion fails, the kill is pasted as-is and the error goes to the echo area.
+
 * Prerequisites
 
 Emacs 29.1+ with tree-sitter support. Compiled grammars for =markdown= and =markdown-inline= (from [[https://github.com/tree-sitter-grammars/tree-sitter-markdown][tree-sitter-grammars/tree-sitter-markdown]]).

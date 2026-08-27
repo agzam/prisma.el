@@ -1,5 +1,10 @@
 #+TITLE: Changelog
 
+* 1.2.0
+- New global mode: =prisma-yank-mode= converts kills between Markdown and Org as they are pasted, so copying across the two formats needs no thought
+- Kills carry their format in a text property, recovered from the kill ring when the clipboard or Evil strips it
+- Escape hatches: a bare =C-u= before the paste, or =prisma-yank-inhibit= bound around it, insert the kill unchanged
+
 * 1.1.0
 - Grammar guard: a missing tree-sitter grammar now signals a clear, actionable error naming the grammar, instead of an opaque dlopen failure
 - New command: =prisma-md-install-grammars= builds and installs the =markdown= and =markdown-inline= grammars using built-in recipes

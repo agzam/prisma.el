@@ -5,7 +5,7 @@
 ;; Author: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Maintainer: Ag Ibragimov <agzam.ibragimov@gmail.com>
 ;; Created: May 09, 2026
-;; Version: 1.1.0
+;; Version: 1.2.0
 ;; Keywords: tools convenience
 ;; Homepage: https://github.com/agzam/prisma.el
 ;; Package-Requires: ((emacs "29.1"))
