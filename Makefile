@@ -1,6 +1,10 @@
 ELPA_DIR = $(CURDIR)/.elpa
+SANDBOX_DIR = $(CURDIR)/.sandbox
 
-EMACS_BATCH = emacs -Q --batch \
+# -Q alone still writes eln-cache trampolines and other state under ~/.emacs.d.
+EMACS_Q = emacs -Q --batch --init-directory="$(SANDBOX_DIR)"
+
+EMACS_BATCH = $(EMACS_Q) \
 	--eval "(setq load-prefer-newer t)" \
 	--eval "(setq package-user-dir \"$(ELPA_DIR)\")" \
 	--eval "(require 'package)" \
@@ -58,7 +62,7 @@ test-live:
 check-autoloads:
 	@echo "Generating and loading autoloads..."
 	rm -f prisma-autoloads.el
-	emacs -Q --batch \
+	$(EMACS_Q) \
 	--eval "(setq generated-autoload-file (expand-file-name \"prisma-autoloads.el\" \"$(CURDIR)\"))" \
 	--eval "(update-directory-autoloads \"$(CURDIR)\")" \
 	--eval "(load generated-autoload-file nil 'nomessage)"
@@ -81,4 +85,4 @@ compile: $(ELPA_DIR)
 clean:
 	@echo "Cleaning compiled files..."
 	rm -f *.elc test/*.elc
-	rm -rf $(ELPA_DIR)
+	rm -rf $(ELPA_DIR) $(SANDBOX_DIR)
