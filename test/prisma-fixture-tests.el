@@ -268,6 +268,18 @@ Returns the actual source text after commit."
      :expected "# Title\n\nContains < and > and & chars")
 
     ;; ══════════════════════════════════════════════════════════════
+    ;; ORG MARKUP INSIDE CODE BLOCKS (comma-escaped in the mirror)
+    ;; ══════════════════════════════════════════════════════════════
+
+    (:name "baseline: code block holding Org markup"
+     :source "```org\n* TODO x\n#+begin_src elisp\n(foo)\n#+end_src\n```")
+
+    (:name "edit: escaped line in code block"
+     :source "```org\n* TODO x\n#+begin_src elisp\n(foo)\n#+end_src\n```"
+     :edits ((",* TODO x" . ",* DONE x"))
+     :expected "```org\n* DONE x\n#+begin_src elisp\n(foo)\n#+end_src\n```")
+
+    ;; ══════════════════════════════════════════════════════════════
     ;; TABLES
     ;; ══════════════════════════════════════════════════════════════
 
@@ -406,6 +418,18 @@ When :expected is nil, expects byte-identical to :source after commit.")
      :expected "#+begin_src js\nnew()\n#+end_src\n\n- new item")
 
     ;; ══════════════════════════════════════════════════════════════
+    ;; ESCAPED CODE BLOCKS (commas dropped in the mirror)
+    ;; ══════════════════════════════════════════════════════════════
+
+    (:name "baseline: escaped code block"
+     :source "#+begin_src org\n,* TODO x\n,#+end_src\n#+end_src")
+
+    (:name "edit: Org markup line added to code block"
+     :source "#+begin_src org\n,* TODO x\n,#+end_src\n#+end_src"
+     :edits (("#+end_src\n```" . "#+end_src\n* added\n```"))
+     :expected "#+begin_src org\n,* TODO x\n,#+end_src\n,* added\n#+end_src")
+
+    ;; ══════════════════════════════════════════════════════════════
     ;; TABLES
     ;; ══════════════════════════════════════════════════════════════
 
@@ -482,7 +506,16 @@ When :expected is nil, expects byte-identical to :source after commit.")
      :verify (lambda (result)
                (let ((install (string-match "Installation" result))
                      (config (string-match "Configuration" result)))
-                 (and install config (> install config))))))
+                 (and install config (> install config)))))
+
+    ;; An unescaped `* TODO x' in the mirror is a sibling heading of `* Beta'.
+    (:name "B7: metaup past a code block holding an Org heading"
+     :source "# Alpha\n\n```org\n* TODO x\n```\n\n# Beta\n\nBeta text"
+     :target-line "* Beta"
+     :operation metaup
+     :verify (lambda (result)
+               (equal result
+                      "# Beta\n\nBeta text\n\n# Alpha\n\n```org\n* TODO x\n```"))))
 
   "Rearrangement test cases requiring org-metaup/metadown.")
 

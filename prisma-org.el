@@ -214,6 +214,21 @@ Returns (node . end-pos) or nil."
         (push node result)))
     (nreverse result)))
 
+;;;; Code-block escaping
+
+(defun prisma-org--escape-code (body)
+  "Return BODY with a comma before each line Org would read as markup.
+A line qualifies when, after indentation and any commas, it starts
+with `*' or `#+'.  This is the rule of `org-escape-code-in-string'."
+  (replace-regexp-in-string "^[ \t]*\\(,*\\(?:\\*\\|#\\+\\)\\)" ",\\1"
+                            body nil nil 1))
+
+(defun prisma-org--unescape-code (body)
+  "Return BODY with one comma dropped from each escaped line.
+This is the rule of `org-unescape-code-in-string'."
+  (replace-regexp-in-string "^[ \t]*,*\\(,\\)\\(?:\\*\\|#\\+\\)" ""
+                            body nil nil 1))
+
 ;;;; Block-level parser
 
 (defun prisma-org-parse (text)
@@ -294,7 +309,8 @@ If END-REGEX never matches, BODY-LINES is everything to end of LINES."
                              "^#\\+end_src"))
                  (body-lines (plist-get collected :body))
                  (body (if body-lines
-                           (concat (mapconcat #'identity body-lines "\n")
+                           (concat (mapconcat #'prisma-org--unescape-code
+                                              body-lines "\n")
                                    "\n")
                          "")))
             (setq i (plist-get collected :end-i))
@@ -573,7 +589,8 @@ Returns (paragraph-node next-i next-pos)."
     ('linebreak "\\\\\n")
     ('code-block
      (let ((lang (or (prisma-model-prop node :language) ""))
-           (body (or (prisma-model-prop node :body) "")))
+           (body (prisma-org--escape-code
+                  (or (prisma-model-prop node :body) ""))))
        (concat "#+begin_src " lang "\n" body
                (if (string-suffix-p "\n" body) "" "\n")
                "#+end_src")))

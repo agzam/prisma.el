@@ -766,4 +766,53 @@ Both must have the same block count (non-structural edits)."
               :to-equal (length (split-string src "\n")))
       (expect (prisma-iso--count-line-diffs src res) :to-equal 1))))
 
+;;;; ================================================================
+;;;; 8. CODE BLOCKS HOLDING ORG MARKUP
+;;;; ================================================================
+
+(defvar prisma-iso--org-escaped
+  "* Title\n\nIntro text\n\n#+begin_src org\n,* TODO x\n,#+begin_src elisp\n(foo)\n,#+end_src\n#+end_src\n\nOutro text"
+  "Org source whose code block holds comma-escaped Org markup.")
+
+(defvar prisma-iso--md-org-code
+  "# Title\n\nIntro text\n\n```org\n* TODO x\n#+begin_src elisp\n(foo)\n#+end_src\n```\n\nOutro text"
+  "MD source whose code block holds Org markup.")
+
+(describe "Code blocks holding Org markup"
+
+  (it "Org source: escaped block stays byte-identical when a paragraph is edited"
+    (let* ((src prisma-iso--org-escaped)
+           (res (prisma-iso--run
+                 #'org-mode src
+                 (lambda ()
+                   (expect (buffer-string) :to-match "^\\* TODO x$")
+                   (funcall (prisma-iso--replace
+                             '("Intro text" . "Intro changed")))))))
+      (expect res :to-equal
+              "* Title\n\nIntro changed\n\n#+begin_src org\n,* TODO x\n,#+begin_src elisp\n(foo)\n,#+end_src\n#+end_src\n\nOutro text")
+      (expect (prisma-iso--changed-block-indices src res) :to-equal '(1))))
+
+  (it "MD source: code block stays byte-identical when a paragraph is edited"
+    (let* ((src prisma-iso--md-org-code)
+           (res (prisma-iso--run
+                 #'markdown-mode src
+                 (lambda ()
+                   ;; Checked before commit: with an unescaped inner
+                   ;; #+end_src, `prisma-org-parse' never returns.
+                   (expect (buffer-string) :to-match "^,#\\+end_src$")
+                   (funcall (prisma-iso--replace
+                             '("Intro text" . "Intro changed")))))))
+      (expect res :to-equal
+              "# Title\n\nIntro changed\n\n```org\n* TODO x\n#+begin_src elisp\n(foo)\n#+end_src\n```\n\nOutro text")
+      (expect (prisma-iso--changed-block-indices src res) :to-equal '(1))))
+
+  (it "Org source: editing inside the block re-escapes only that block"
+    (let* ((src prisma-iso--org-escaped)
+           (res (prisma-iso--run
+                 #'org-mode src
+                 (prisma-iso--replace '("(foo)" . "(bar)")))))
+      (expect res :to-equal
+              "* Title\n\nIntro text\n\n#+begin_src org\n,* TODO x\n,#+begin_src elisp\n(bar)\n,#+end_src\n#+end_src\n\nOutro text")
+      (expect (prisma-iso--changed-block-indices src res) :to-equal '(2)))))
+
 ;;; prisma-isolation-tests.el ends here

@@ -232,6 +232,56 @@
     (expect (prisma-test-org-roundtrip "-----\n")
             :to-equal "-----")))
 
+(describe "Org code-block escaping"
+  (it "puts a comma before body lines Org would read as markup"
+    (let ((ast (prisma-model-document
+                :children (list (prisma-model-code-block
+                                 :language "org"
+                                 :body "* x\n  #+end_src\n,* y\n#c\nplain\n")))))
+      (expect (prisma-render 'org ast)
+              :to-equal
+              "#+begin_src org\n,* x\n  ,#+end_src\n,,* y\n#c\nplain\n#+end_src")))
+
+  (it "drops one comma from each escaped line on parse"
+    (let* ((ast (prisma-parse
+                 'org
+                 "#+begin_src org\n,* x\n  ,#+end_src\n,,* y\n#c\nplain\n#+end_src\n"))
+           (cb (car (prisma-model-children ast))))
+      (expect (prisma-model-prop cb :body)
+              :to-equal "* x\n  #+end_src\n,* y\n#c\nplain\n")))
+
+  (it "round-trips an escaped block unchanged"
+    (let ((org (concat "#+begin_src org\n,* TODO x\n,#+begin_src elisp\n"
+                       "(foo)\n,#+end_src\n#+end_src")))
+      (expect (prisma-test-org-roundtrip org) :to-equal org)))
+
+  (it "keeps an escaped inner #+end_src inside the block"
+    (let* ((ast (prisma-parse
+                 'org
+                 (concat "#+begin_src org\n,#+begin_src elisp\n(foo)\n"
+                         ",#+end_src\n#+end_src\n\nAfter\n")))
+           (children (prisma-model-children ast)))
+      (expect (mapcar #'prisma-model-type children)
+              :to-equal '(code-block paragraph))
+      (expect (prisma-model-prop (car children) :body)
+              :to-equal "#+begin_src elisp\n(foo)\n#+end_src\n")))
+
+  (it "writes the Markdown fence without the commas"
+    (expect (prisma-test-org->md
+             "#+begin_src org\n,* TODO x\n,#+end_src\n#+end_src\n")
+            :to-equal "```org\n* TODO x\n#+end_src\n```"))
+
+  (it "escapes and unescapes as org-src does"
+    (require 'org-src)
+    (let ((body (concat "* a\n** b\n#+c\n  * d\n\t#+e\n,* f\n,,#+g\n"
+                        "#h\n,i\n*\n#+\na * b\n")))
+      (expect (prisma-org--escape-code body)
+              :to-equal (org-escape-code-in-string body))
+      (expect (prisma-org--unescape-code body)
+              :to-equal (org-unescape-code-in-string body))
+      (expect (prisma-org--unescape-code (prisma-org--escape-code body))
+              :to-equal body))))
+
 (describe "Org parser - tables"
   (it "parses pipe tables as structured table nodes"
     (let* ((ast (prisma-parse 'org "| A | B |\n|---|---|\n| 1 | 2 |\n"))
