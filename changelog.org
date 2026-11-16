@@ -1,5 +1,9 @@
 #+TITLE: Changelog
 
+* 1.2.1
+- Code blocks that hold Org markup convert cleanly: Markdown -> Org puts a comma before each code line starting with =*= or =#+=, as Org itself does, and Org -> Markdown drops it, so those lines no longer become headings or close the block early
+- Batch test runs keep their Emacs state (eln-cache trampolines and the like) in a repo-local =.sandbox/= instead of =~/.emacs.d/=
+
 * 1.2.0
 - New global mode: =prisma-yank-mode= converts kills between Markdown and Org as they are pasted, so copying across the two formats needs no thought
 - Kills carry their format in a text property, recovered from the kill ring when the clipboard or Evil strips it
